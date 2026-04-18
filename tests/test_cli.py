@@ -256,3 +256,124 @@ def test_r12_fetch_error_exits_1(monkeypatch):
     assert result.exit_code == 1
     assert "[ERROR]" in result.output
     assert "Fetch failed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# R01 (009) — --no-agent flag skips agent call
+# ---------------------------------------------------------------------------
+
+def test_r01_no_agent_flag_skips_agent(runner, monkeypatch):
+    """With --no-agent, agent.evaluate should NOT be called."""
+    import textread.cli as cli_mod
+
+    agent_called = []
+
+    def fake_evaluate(url, raw, ctx, model):
+        agent_called.append(True)
+        return _make_mapping()
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", URL, "--no-agent"])
+    assert result.exit_code == 0, result.output
+    assert "[CACHED]" in result.output
+    assert agent_called == []  # agent.evaluate was NOT called
+
+
+# ---------------------------------------------------------------------------
+# R02 (009) — agent_enabled: false in config skips agent call
+# ---------------------------------------------------------------------------
+
+def test_r02_config_agent_disabled_skips_agent(runner, monkeypatch):
+    """With agent_enabled: false in config, agent.evaluate should NOT be called."""
+    import textread.cli as cli_mod
+    from textread.config import TextreadConfig
+
+    agent_called = []
+
+    def fake_evaluate(url, raw, ctx, model):
+        agent_called.append(True)
+        return _make_mapping()
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+    monkeypatch.setattr(cli_mod, "load_config", lambda: TextreadConfig(agent_enabled=False))
+
+    result = runner.invoke(main, ["read", URL])
+    assert result.exit_code == 0, result.output
+    assert "[CACHED]" in result.output
+    assert agent_called == []  # agent.evaluate was NOT called
+
+
+# ---------------------------------------------------------------------------
+# R03 (009) — --no-agent ignores --model flag
+# ---------------------------------------------------------------------------
+
+def test_r03_no_agent_ignores_model(runner, monkeypatch):
+    """With --no-agent, --model flag is ignored and no error occurs."""
+    import textread.cli as cli_mod
+
+    agent_called = []
+
+    def fake_evaluate(url, raw, ctx, model):
+        agent_called.append(model)
+        return _make_mapping()
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", URL, "--no-agent", "--model", "sonnet"])
+    assert result.exit_code == 0, result.output
+    assert "[CACHED]" in result.output
+    assert agent_called == []  # agent.evaluate was NOT called
+
+
+# ---------------------------------------------------------------------------
+# R04 (009) — --no-agent with cached URL doesn't re-fetch
+# ---------------------------------------------------------------------------
+
+def test_r04_no_agent_cache_hit(runner, monkeypatch):
+    """With --no-agent and cached content, fetch.pull is still called but cache is used."""
+    import textread.cli as cli_mod
+
+    fetch_called = []
+
+    def fake_pull(url, refresh=False, cache=None):
+        fetch_called.append(refresh)
+        return None  # No new content (cache hit)
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", fake_pull)
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "cached text")
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", URL, "--no-agent"])
+    assert result.exit_code == 0, result.output
+    assert "[CACHED]" in result.output
+    assert fetch_called == [False]  # fetch was called with refresh=False
+
+
+# ---------------------------------------------------------------------------
+# R05 (009) — remap with --no-agent errors
+# ---------------------------------------------------------------------------
+
+def test_r05_remap_no_agent_errors(runner, monkeypatch):
+    """remap --no-agent should exit 1 with [ERROR] message."""
+    import textread.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["remap", URL, "--no-agent"])
+    assert result.exit_code == 1
+    assert "[ERROR]" in result.output
+    assert "--no-agent has no effect on remap" in result.output

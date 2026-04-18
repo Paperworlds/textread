@@ -46,3 +46,21 @@ def test_r09_unknown_keys_ignored(tmp_path, monkeypatch):
     cfg = config_mod.load()
     assert cfg.cache_root == "/x"
     assert not hasattr(cfg, "future_flag")
+
+
+def test_r06_agent_enabled_default(tmp_path, monkeypatch):
+    """Agent is enabled by default."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.agent_enabled is True
+
+
+def test_agent_enabled_false(tmp_path, monkeypatch):
+    """agent_enabled: false is parsed correctly."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {"agent_enabled": False})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.agent_enabled is False

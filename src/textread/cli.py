@@ -76,11 +76,13 @@ def main():
 @click.option("--refresh", is_flag=True, default=False, help="Bypass cache and re-fetch from network.")
 @click.option("--deep", is_flag=True, default=False, help="Print full mapping YAML instead of verdict line.")
 @click.option("--save", is_flag=True, default=False, help="Save mapping to read list.")
-def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, deep: bool, save: bool):
+@click.option("--no-agent", "no_agent", is_flag=True, default=False, help="Fetch and cache only — skip the agent call.")
+def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, deep: bool, save: bool, no_agent: bool):
     """Fetch URL, run agent, write mapping.yaml, print verdict."""
     cfg = load_config()
     model = model or cfg.default_model
     ctx = _load_context(ctx_path)
+    run_agent = cfg.agent_enabled and not no_agent
 
     try:
         result = fetch.pull(url, refresh=refresh, cache=_CacheProxy(cfg))
@@ -95,6 +97,10 @@ def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, d
         cache.put(url, result, cfg)
 
     raw = cache.get_markdown(url, cfg)
+
+    if not run_agent:
+        click.echo(f"[CACHED] {url}")
+        return
 
     try:
         mapping = agent.evaluate(url, raw, ctx, model)
@@ -115,8 +121,13 @@ def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, d
 @click.option("--model", default=None, help="Model alias (haiku/sonnet/opus) or raw model ID.")
 @click.option("--context", "ctx_path", default=None, type=click.Path(), help="Path to context YAML file.")
 @click.option("--deep", is_flag=True, default=False, help="Print full mapping YAML instead of verdict line.")
-def remap_cmd(url: str, model: str | None, ctx_path: str | None, deep: bool):
+@click.option("--no-agent", "no_agent", is_flag=True, default=False, help="Not applicable for remap.")
+def remap_cmd(url: str, model: str | None, ctx_path: str | None, deep: bool, no_agent: bool):
     """Re-run agent on cached content and overwrite mapping.yaml."""
+    if no_agent:
+        click.echo("[ERROR] --no-agent has no effect on remap", err=True)
+        sys.exit(1)
+
     cfg = load_config()
     model = model or cfg.default_model
     ctx = _load_context(ctx_path)

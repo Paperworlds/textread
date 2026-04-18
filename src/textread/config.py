@@ -5,7 +5,7 @@ import yaml
 
 
 _CONFIG_PATH = Path("~/.config/paperworlds/textread.yaml")
-_KNOWN_FIELDS = {"cache_root", "default_model", "context_path"}
+_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled"}
 
 
 @dataclasses.dataclass
@@ -13,6 +13,7 @@ class TextreadConfig:
     cache_root: str = "~/.textread/cache"
     default_model: str = "haiku"
     context_path: str = "~/.config/paperworlds/read-context.yaml"
+    agent_enabled: bool = True
 
 
 def load() -> TextreadConfig:
@@ -25,6 +26,9 @@ def load() -> TextreadConfig:
         print("[WARN] textread.yaml is malformed — using defaults")
         return TextreadConfig()
     known = {k: v for k, v in data.items() if k in _KNOWN_FIELDS}
+    # Cast agent_enabled to bool explicitly
+    if "agent_enabled" in known:
+        known["agent_enabled"] = bool(known["agent_enabled"])
     return TextreadConfig(**known)
 
 
