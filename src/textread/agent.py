@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import shutil
 import subprocess
+import sys
 from typing import Any
 
 import anthropic
@@ -83,6 +85,21 @@ def _parse_mapping(raw_text: str) -> Mapping:
         raise AgentError(raw_text)
 
 
+def _resolve_profile_env(profile: str | None) -> dict[str, str]:
+    """Return env overrides for the given profile name, or {} if none."""
+    if profile is None:
+        return {}
+    try:
+        from textaccounts.api import env_for_profile, list_profiles  # type: ignore[import]
+    except ImportError:
+        print("[WARN] textaccounts not installed — profile ignored", file=sys.stderr)
+        return {}
+    profiles = list_profiles()
+    if profile not in [p.name for p in profiles]:
+        raise AgentError(f"Unknown profile: {profile}")
+    return env_for_profile(profile)
+
+
 def _sanitize(text: str) -> str:
     """Strip null bytes and CR characters that could corrupt subprocess args."""
     return text.replace("\x00", "").replace("\r", "")
@@ -119,6 +136,7 @@ def _evaluate_cli(
     raw: str,
     context: ReadContext,
     model: str,
+    profile_env: dict[str, str] | None = None,
 ) -> Mapping:
     if shutil.which("claude") is None:
         raise AgentError("claude binary not found — install Claude Code or use --no-agent")
@@ -126,6 +144,7 @@ def _evaluate_cli(
     model_id = MODEL_ALIASES.get(model, model)
     system = _sanitize(_build_system_prompt(context))
     user_msg = _sanitize(f"URL: {url}\n\nContent:\n{raw[:MAX_CONTENT_CHARS]}")
+    env = {**os.environ, **(profile_env or {})}
 
     result = subprocess.run(
         ["claude", "-p", user_msg, "--system", system,
@@ -133,6 +152,7 @@ def _evaluate_cli(
         capture_output=True,
         text=True,
         timeout=120,
+        env=env,
     )
     if result.returncode != 0:
         raise AgentError(result.stderr.strip() or "claude -p exited non-zero")
@@ -146,6 +166,7 @@ def evaluate(
     context: ReadContext,
     model: str = "haiku",
     backend: str = "sdk",
+    profile: str | None = None,
 ) -> Mapping:
     """Call the configured agent backend and return a structured Mapping.
 
@@ -155,6 +176,7 @@ def evaluate(
         context: User reading context.
         model: Model alias ("haiku", "sonnet", "opus") or raw model ID.
         backend: "sdk" (default) or "cli" (shells out to `claude -p`).
+        profile: textaccounts profile name for CLI backend env injection.
 
     Returns:
         Mapping dataclass with verdict, score, and summary fields.
@@ -163,5 +185,8 @@ def evaluate(
         AgentError: If the response cannot be parsed or verdict is invalid.
     """
     if backend == "cli":
-        return _evaluate_cli(url, raw, context, model)
+        profile_env = _resolve_profile_env(profile)
+        return _evaluate_cli(url, raw, context, model, profile_env)
+    if profile is not None:
+        print("[WARN] --profile has no effect with sdk backend", file=sys.stderr)
     return _evaluate_sdk(url, raw, context, model)

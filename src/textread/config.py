@@ -5,7 +5,7 @@ import yaml
 
 
 _CONFIG_PATH = Path("~/.config/paperworlds/textread.yaml")
-_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend"}
+_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend", "default_profile"}
 
 
 @dataclasses.dataclass
@@ -15,6 +15,7 @@ class TextreadConfig:
     context_path: str = "~/.config/paperworlds/read-context.yaml"
     agent_enabled: bool = True
     agent_backend: str = "sdk"
+    default_profile: str | None = None
 
 
 def load() -> TextreadConfig:

@@ -97,3 +97,25 @@ def test_agent_backend_invalid(tmp_path, monkeypatch, capsys):
     assert cfg.agent_backend == "sdk"
     captured = capsys.readouterr()
     assert "[WARN]" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# 011 — default_profile config field
+# ---------------------------------------------------------------------------
+
+def test_default_profile_none(tmp_path, monkeypatch):
+    """Empty config defaults default_profile to None."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.default_profile is None
+
+
+def test_default_profile_set(tmp_path, monkeypatch):
+    """default_profile: personal is loaded correctly."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {"default_profile": "personal"})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.default_profile == "personal"

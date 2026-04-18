@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from textread.agent import AgentError, Mapping, _parse_mapping, _sanitize, evaluate
+from textread.agent import AgentError, Mapping, _parse_mapping, _resolve_profile_env, _sanitize, evaluate
 from textread.context import Project, ReadContext
 
 _VALID_JSON = json.dumps({
@@ -216,3 +216,88 @@ def test_r07_sanitize_strips_nulls():
     assert "\r" not in clean
     assert "hello" in clean
     assert "world" in clean
+
+
+# ---------------------------------------------------------------------------
+# 011 — profile injection tests
+# ---------------------------------------------------------------------------
+
+def test_r01_profile_injects_env(monkeypatch):
+    """CLI backend injects profile env into subprocess when profile is set."""
+    import types
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
+
+    # Build a fake profile object
+    profile_obj = types.SimpleNamespace(name="personal")
+
+    fake_textaccounts = types.ModuleType("textaccounts")
+    fake_api = types.ModuleType("textaccounts.api")
+    fake_api.list_profiles = lambda: [profile_obj]
+    fake_api.env_for_profile = lambda name: {"CLAUDE_CONFIG_DIR": "/tmp/test"}
+    fake_textaccounts.api = fake_api
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "textaccounts", fake_textaccounts)
+    monkeypatch.setitem(_sys.modules, "textaccounts.api", fake_api)
+
+    seen_env = []
+
+    def fake_run(args, **kwargs):
+        seen_env.append(kwargs.get("env", {}))
+        return _make_subprocess_result(_VALID_JSON)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = evaluate("https://example.com", "content", ReadContext(), backend="cli", profile="personal")
+
+    assert isinstance(result, Mapping)
+    assert len(seen_env) == 1
+    assert seen_env[0].get("CLAUDE_CONFIG_DIR") == "/tmp/test"
+
+
+def test_r02_unknown_profile_raises(monkeypatch):
+    """AgentError raised when profile name is not in list_profiles."""
+    import types
+
+    fake_textaccounts = types.ModuleType("textaccounts")
+    fake_api = types.ModuleType("textaccounts.api")
+    fake_api.list_profiles = lambda: []
+    fake_api.env_for_profile = lambda name: {}
+    fake_textaccounts.api = fake_api
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "textaccounts", fake_textaccounts)
+    monkeypatch.setitem(_sys.modules, "textaccounts.api", fake_api)
+
+    with pytest.raises(AgentError, match="Unknown profile"):
+        _resolve_profile_env("nonexistent")
+
+
+def test_r03_textaccounts_not_installed(monkeypatch, capsys):
+    """Returns {} and prints [WARN] when textaccounts is not installed."""
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "textaccounts", None)
+    monkeypatch.setitem(_sys.modules, "textaccounts.api", None)
+
+    result = _resolve_profile_env("personal")
+
+    assert result == {}
+    captured = capsys.readouterr()
+    assert "[WARN]" in captured.err
+    assert "textaccounts not installed" in captured.err
+
+
+def test_r04_sdk_backend_warns_on_profile(monkeypatch, capsys):
+    """SDK backend prints [WARN] when profile is passed and proceeds normally."""
+    client = mock_response(_VALID_JSON)
+    with patch("textread.agent.anthropic.Anthropic", return_value=client):
+        result = evaluate("https://example.com", "content", ReadContext(), backend="sdk", profile="personal")
+
+    assert isinstance(result, Mapping)
+    captured = capsys.readouterr()
+    assert "[WARN]" in captured.err
+    assert "sdk backend" in captured.err
+
+
+def test_r05_no_profile_no_env_change():
+    """_resolve_profile_env(None) returns empty dict."""
+    assert _resolve_profile_env(None) == {}

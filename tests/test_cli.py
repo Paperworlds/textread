@@ -436,3 +436,72 @@ def test_via_cli_remap(runner, monkeypatch):
     result = runner.invoke(main, ["remap", URL, "--via-cli"])
     assert result.exit_code == 0, result.output
     assert seen_backend == ["cli"]
+
+
+# ---------------------------------------------------------------------------
+# 011 — --profile flag and default_profile config
+# ---------------------------------------------------------------------------
+
+def test_profile_flag_passed_to_agent(runner, monkeypatch):
+    """--profile personal is forwarded to agent.evaluate as profile='personal'."""
+    import textread.cli as cli_mod
+
+    seen_profile = []
+
+    def fake_evaluate(url, raw, ctx, model, **kw):
+        seen_profile.append(kw.get("profile"))
+        return _make_mapping()
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", URL, "--via-cli", "--profile", "personal"])
+    assert result.exit_code == 0, result.output
+    assert seen_profile == ["personal"]
+
+
+def test_default_profile_from_config(runner, monkeypatch):
+    """default_profile from config is used when --profile is not passed."""
+    import textread.cli as cli_mod
+    from textread.config import TextreadConfig
+
+    seen_profile = []
+
+    def fake_evaluate(url, raw, ctx, model, **kw):
+        seen_profile.append(kw.get("profile"))
+        return _make_mapping()
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+    monkeypatch.setattr(cli_mod, "load_config", lambda: TextreadConfig(agent_backend="cli", default_profile="work"))
+
+    result = runner.invoke(main, ["read", URL])
+    assert result.exit_code == 0, result.output
+    assert seen_profile == ["work"]
+
+
+def test_profile_with_sdk_backend_warns(runner, monkeypatch):
+    """--profile with sdk backend prints [WARN] and exits 0."""
+    import textread.agent as agent_mod
+    import textread.cli as cli_mod
+
+    # Patch _evaluate_sdk so real evaluate() runs (and prints the [WARN]) without hitting the API
+    monkeypatch.setattr(agent_mod, "_evaluate_sdk", lambda url, raw, ctx, model: _make_mapping())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", URL, "--profile", "personal"], catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    # CliRunner with mix_stderr=True (default) merges stderr into output
+    assert "[WARN]" in result.output
