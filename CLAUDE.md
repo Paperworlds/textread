@@ -19,3 +19,6 @@ Context-aware link reader powered by Claude Haiku. Reads URLs and produces relev
 - Do NOT write to real `~/.textread` in tests
 - Regression tests are mandatory for bug fixes
 - Tests must be fast: complete in milliseconds, not seconds
+
+## Forums
+Before starting work, run `textforums list --tag textread --status open` and check for open threads relevant to your task. Post a thread tagged `textread` if you hit a cross-repo blocker.
