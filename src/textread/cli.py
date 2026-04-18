@@ -15,6 +15,7 @@ from textread.cache import cache_group
 from textread.config import load as load_config
 from textread.context import ReadContext, context_group
 from textread.fetch import FetchBlocked, FetchError
+from textread.log import append_entry
 
 
 def _load_context(ctx_path: str | None) -> ReadContext:
@@ -103,7 +104,9 @@ def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, d
 
     cache.write_mapping(url, dataclasses.asdict(mapping), cfg)
 
-    # TODO: --save wired in prompt 007
+    if save:
+        append_entry(url, mapping, cache.path(url, cfg))
+
     _print_output(mapping, deep)
 
 
