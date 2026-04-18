@@ -75,7 +75,7 @@ def main():
 @click.option("--context", "ctx_path", default=None, type=click.Path(), help="Path to context YAML file.")
 @click.option("--refresh", is_flag=True, default=False, help="Bypass cache and re-fetch from network.")
 @click.option("--deep", is_flag=True, default=False, help="Print full mapping YAML instead of verdict line.")
-@click.option("--save", is_flag=True, default=False, help="[TODO] Save mapping to read list.")
+@click.option("--save", is_flag=True, default=False, help="Save mapping to read list.")
 def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, deep: bool, save: bool):
     """Fetch URL, run agent, write mapping.yaml, print verdict."""
     cfg = load_config()
