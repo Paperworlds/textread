@@ -5,7 +5,7 @@ import yaml
 
 
 _CONFIG_PATH = Path("~/.config/paperworlds/textread.yaml")
-_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled"}
+_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend"}
 
 
 @dataclasses.dataclass
@@ -14,6 +14,7 @@ class TextreadConfig:
     default_model: str = "haiku"
     context_path: str = "~/.config/paperworlds/read-context.yaml"
     agent_enabled: bool = True
+    agent_backend: str = "sdk"
 
 
 def load() -> TextreadConfig:
@@ -29,6 +30,10 @@ def load() -> TextreadConfig:
     # Cast agent_enabled to bool explicitly
     if "agent_enabled" in known:
         known["agent_enabled"] = bool(known["agent_enabled"])
+    # Validate agent_backend
+    if "agent_backend" in known and known["agent_backend"] not in {"sdk", "cli"}:
+        print(f"[WARN] agent_backend must be 'sdk' or 'cli' — got {known['agent_backend']!r}, defaulting to 'sdk'")
+        known["agent_backend"] = "sdk"
     return TextreadConfig(**known)
 
 

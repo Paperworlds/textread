@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
+import subprocess
 from typing import Any
 
 import anthropic
@@ -66,27 +68,32 @@ def _build_system_prompt(context: ReadContext) -> str:
     )
 
 
-def evaluate(
+def _parse_mapping(raw_text: str) -> Mapping:
+    """Parse and validate a JSON string into a Mapping. Raises AgentError on failure."""
+    try:
+        parsed: dict[str, Any] = json.loads(raw_text)
+        verdict = parsed["verdict"]
+        if verdict not in VALID_VERDICTS:
+            raise AgentError(raw_text)
+        field_names = {f.name for f in dataclasses.fields(Mapping)}
+        return Mapping(**{k: parsed[k] for k in field_names})
+    except AgentError:
+        raise
+    except (json.JSONDecodeError, KeyError):
+        raise AgentError(raw_text)
+
+
+def _sanitize(text: str) -> str:
+    """Strip null bytes and CR characters that could corrupt subprocess args."""
+    return text.replace("\x00", "").replace("\r", "")
+
+
+def _evaluate_sdk(
     url: str,
     raw: str,
     context: ReadContext,
-    model: str = "haiku",
+    model: str,
 ) -> Mapping:
-    """Call the Anthropic API and return a structured Mapping.
-
-    Args:
-        url: The source URL.
-        raw: Raw text content of the page.
-        context: User reading context.
-        model: Model alias ("haiku", "sonnet", "opus") or raw model ID.
-
-    Returns:
-        Mapping dataclass with verdict, score, and summary fields.
-
-    Raises:
-        AgentError: If the API response cannot be parsed or verdict is invalid.
-        anthropic.AuthenticationError: If ANTHROPIC_API_KEY is not set.
-    """
     model_id = MODEL_ALIASES.get(model, model)
 
     if len(raw) > MAX_CONTENT_CHARS:
@@ -104,15 +111,57 @@ def evaluate(
     )
 
     raw_text: str = response.content[0].text
+    return _parse_mapping(raw_text)
 
-    try:
-        parsed: dict[str, Any] = json.loads(raw_text)
-        verdict = parsed["verdict"]
-        if verdict not in VALID_VERDICTS:
-            raise AgentError(raw_text)
-        field_names = {f.name for f in dataclasses.fields(Mapping)}
-        return Mapping(**{k: parsed[k] for k in field_names})
-    except AgentError:
-        raise
-    except (json.JSONDecodeError, KeyError):
-        raise AgentError(raw_text)
+
+def _evaluate_cli(
+    url: str,
+    raw: str,
+    context: ReadContext,
+    model: str,
+) -> Mapping:
+    if shutil.which("claude") is None:
+        raise AgentError("claude binary not found — install Claude Code or use --no-agent")
+
+    model_id = MODEL_ALIASES.get(model, model)
+    system = _sanitize(_build_system_prompt(context))
+    user_msg = _sanitize(f"URL: {url}\n\nContent:\n{raw[:MAX_CONTENT_CHARS]}")
+
+    result = subprocess.run(
+        ["claude", "-p", user_msg, "--system", system,
+         "--model", model_id, "--output-format", "text"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise AgentError(result.stderr.strip() or "claude -p exited non-zero")
+
+    return _parse_mapping(result.stdout.strip())
+
+
+def evaluate(
+    url: str,
+    raw: str,
+    context: ReadContext,
+    model: str = "haiku",
+    backend: str = "sdk",
+) -> Mapping:
+    """Call the configured agent backend and return a structured Mapping.
+
+    Args:
+        url: The source URL.
+        raw: Raw text content of the page.
+        context: User reading context.
+        model: Model alias ("haiku", "sonnet", "opus") or raw model ID.
+        backend: "sdk" (default) or "cli" (shells out to `claude -p`).
+
+    Returns:
+        Mapping dataclass with verdict, score, and summary fields.
+
+    Raises:
+        AgentError: If the response cannot be parsed or verdict is invalid.
+    """
+    if backend == "cli":
+        return _evaluate_cli(url, raw, context, model)
+    return _evaluate_sdk(url, raw, context, model)

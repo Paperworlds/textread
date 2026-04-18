@@ -77,12 +77,18 @@ def main():
 @click.option("--deep", is_flag=True, default=False, help="Print full mapping YAML instead of verdict line.")
 @click.option("--save", is_flag=True, default=False, help="Save mapping to read list.")
 @click.option("--no-agent", "no_agent", is_flag=True, default=False, help="Fetch and cache only — skip the agent call.")
-def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, deep: bool, save: bool, no_agent: bool):
+@click.option("--via-cli", "via_cli", is_flag=True, default=False, help="Use claude CLI backend instead of Anthropic SDK.")
+def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, deep: bool, save: bool, no_agent: bool, via_cli: bool):
     """Fetch URL, run agent, write mapping.yaml, print verdict."""
+    if via_cli and no_agent:
+        click.echo("[ERROR] --via-cli and --no-agent are mutually exclusive", err=True)
+        sys.exit(1)
+
     cfg = load_config()
     model = model or cfg.default_model
     ctx = _load_context(ctx_path)
     run_agent = cfg.agent_enabled and not no_agent
+    backend = "cli" if via_cli else cfg.agent_backend
 
     try:
         result = fetch.pull(url, refresh=refresh, cache=_CacheProxy(cfg))
@@ -103,7 +109,7 @@ def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, d
         return
 
     try:
-        mapping = agent.evaluate(url, raw, ctx, model)
+        mapping = agent.evaluate(url, raw, ctx, model, backend=backend)
     except AgentError as e:
         click.echo(f"[ERROR] {e}", err=True)
         sys.exit(1)
@@ -122,7 +128,8 @@ def read_cmd(url: str, model: str | None, ctx_path: str | None, refresh: bool, d
 @click.option("--context", "ctx_path", default=None, type=click.Path(), help="Path to context YAML file.")
 @click.option("--deep", is_flag=True, default=False, help="Print full mapping YAML instead of verdict line.")
 @click.option("--no-agent", "no_agent", is_flag=True, default=False, help="Not applicable for remap.")
-def remap_cmd(url: str, model: str | None, ctx_path: str | None, deep: bool, no_agent: bool):
+@click.option("--via-cli", "via_cli", is_flag=True, default=False, help="Use claude CLI backend instead of Anthropic SDK.")
+def remap_cmd(url: str, model: str | None, ctx_path: str | None, deep: bool, no_agent: bool, via_cli: bool):
     """Re-run agent on cached content and overwrite mapping.yaml."""
     if no_agent:
         click.echo("[ERROR] --no-agent has no effect on remap", err=True)
@@ -131,6 +138,7 @@ def remap_cmd(url: str, model: str | None, ctx_path: str | None, deep: bool, no_
     cfg = load_config()
     model = model or cfg.default_model
     ctx = _load_context(ctx_path)
+    backend = "cli" if via_cli else cfg.agent_backend
 
     if not cache.exists(url, cfg):
         click.echo(f"[ERROR] No cache entry for {url} — run textread read {url} first", err=True)
@@ -139,7 +147,7 @@ def remap_cmd(url: str, model: str | None, ctx_path: str | None, deep: bool, no_
     raw = cache.get_markdown(url, cfg)
 
     try:
-        mapping = agent.evaluate(url, raw, ctx, model)
+        mapping = agent.evaluate(url, raw, ctx, model, backend=backend)
     except AgentError as e:
         click.echo(f"[ERROR] {e}", err=True)
         sys.exit(1)

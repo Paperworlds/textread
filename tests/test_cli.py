@@ -46,7 +46,7 @@ def mock_deps(monkeypatch):
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "raw content")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: True)
-    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model: mapping)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: mapping)
     monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
 
     return {
@@ -75,7 +75,7 @@ def test_r02_model_flag(runner, monkeypatch):
 
     called_model = []
 
-    def fake_evaluate(url, raw, ctx, model):
+    def fake_evaluate(url, raw, ctx, model, **kw):
         called_model.append(model)
         return _make_mapping()
 
@@ -104,7 +104,7 @@ def test_r03_context_flag(runner, monkeypatch, tmp_path):
 
     loaded_roles = []
 
-    def fake_evaluate(url, raw, ctx, model):
+    def fake_evaluate(url, raw, ctx, model, **kw):
         loaded_roles.append(ctx.role)
         return _make_mapping()
 
@@ -138,7 +138,7 @@ def test_r04_refresh_flag(runner, monkeypatch):
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
-    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model: _make_mapping())
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: _make_mapping())
     monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
 
     result = runner.invoke(main, ["read", URL, "--refresh"])
@@ -188,7 +188,7 @@ def test_r07_remap_uses_cached_raw(runner, monkeypatch):
 
     seen_raw = []
 
-    def fake_evaluate(url, raw, ctx, model):
+    def fake_evaluate(url, raw, ctx, model, **kw):
         seen_raw.append(raw)
         return _make_mapping()
 
@@ -213,7 +213,7 @@ def test_r10_agent_error_exits_1(monkeypatch):
     monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
-    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model: (_ for _ in ()).throw(AgentError("bad json")))
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: (_ for _ in ()).throw(AgentError("bad json")))
     monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
 
     result = CliRunner().invoke(main, ["read", URL])
@@ -268,7 +268,7 @@ def test_r01_no_agent_flag_skips_agent(runner, monkeypatch):
 
     agent_called = []
 
-    def fake_evaluate(url, raw, ctx, model):
+    def fake_evaluate(url, raw, ctx, model, **kw):
         agent_called.append(True)
         return _make_mapping()
 
@@ -295,7 +295,7 @@ def test_r02_config_agent_disabled_skips_agent(runner, monkeypatch):
 
     agent_called = []
 
-    def fake_evaluate(url, raw, ctx, model):
+    def fake_evaluate(url, raw, ctx, model, **kw):
         agent_called.append(True)
         return _make_mapping()
 
@@ -322,7 +322,7 @@ def test_r03_no_agent_ignores_model(runner, monkeypatch):
 
     agent_called = []
 
-    def fake_evaluate(url, raw, ctx, model):
+    def fake_evaluate(url, raw, ctx, model, **kw):
         agent_called.append(model)
         return _make_mapping()
 
@@ -377,3 +377,62 @@ def test_r05_remap_no_agent_errors(runner, monkeypatch):
     assert result.exit_code == 1
     assert "[ERROR]" in result.output
     assert "--no-agent has no effect on remap" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 010 — --via-cli backend dispatch
+# ---------------------------------------------------------------------------
+
+def test_via_cli_flag_sets_backend(runner, monkeypatch):
+    """--via-cli passes backend='cli' to agent.evaluate."""
+    import textread.cli as cli_mod
+
+    seen_backend = []
+
+    def fake_evaluate(url, raw, ctx, model, **kw):
+        seen_backend.append(kw.get("backend"))
+        return _make_mapping()
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", URL, "--via-cli"])
+    assert result.exit_code == 0, result.output
+    assert seen_backend == ["cli"]
+
+
+def test_via_cli_and_no_agent_mutual_exclusion(runner, monkeypatch):
+    """--via-cli and --no-agent together should exit 1 with [ERROR]."""
+    import textread.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", URL, "--via-cli", "--no-agent"])
+    assert result.exit_code == 1
+    assert "[ERROR]" in result.output
+    assert "--via-cli and --no-agent are mutually exclusive" in result.output
+
+
+def test_via_cli_remap(runner, monkeypatch):
+    """remap --via-cli passes backend='cli' to agent.evaluate."""
+    import textread.cli as cli_mod
+
+    seen_backend = []
+
+    def fake_evaluate(url, raw, ctx, model, **kw):
+        seen_backend.append(kw.get("backend"))
+        return _make_mapping()
+
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: True)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "cached text")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["remap", URL, "--via-cli"])
+    assert result.exit_code == 0, result.output
+    assert seen_backend == ["cli"]

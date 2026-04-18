@@ -64,3 +64,36 @@ def test_agent_enabled_false(tmp_path, monkeypatch):
     monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
     cfg = config_mod.load()
     assert cfg.agent_enabled is False
+
+
+# ---------------------------------------------------------------------------
+# 010 — agent_backend config field
+# ---------------------------------------------------------------------------
+
+def test_agent_backend_default(tmp_path, monkeypatch):
+    """Empty config defaults agent_backend to 'sdk'."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.agent_backend == "sdk"
+
+
+def test_agent_backend_cli(tmp_path, monkeypatch):
+    """agent_backend: cli is loaded correctly."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {"agent_backend": "cli"})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.agent_backend == "cli"
+
+
+def test_agent_backend_invalid(tmp_path, monkeypatch, capsys):
+    """Invalid agent_backend value warns and defaults to 'sdk'."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {"agent_backend": "invalid"})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.agent_backend == "sdk"
+    captured = capsys.readouterr()
+    assert "[WARN]" in captured.out
