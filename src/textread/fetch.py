@@ -10,9 +10,6 @@ from urllib.robotparser import RobotFileParser
 import warnings
 
 import httpx
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore", UserWarning)
-    import newspaper
 from readability import Document  # type: ignore[import-untyped]
 
 from textread import __version__
@@ -82,7 +79,10 @@ def pull(url: str, refresh: bool = False, cache=None) -> FetchResult | None:
         if not _robots_allowed(url):
             raise FetchBlocked(url)
 
-        # R02/R03: download + parse via newspaper4k
+        # R02/R03: download + parse via newspaper4k (imported lazily — slow to import)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            import newspaper
         config = newspaper.Config()
         config.browser_user_agent = UA
         article = newspaper.Article(url, config=config)
