@@ -72,17 +72,21 @@ Current implementation, extracted verbatim. No changes.
 ```python
 import shutil, subprocess
 
+def _sanitize(text: str) -> str:
+    """Strip null bytes and other control characters that would corrupt subprocess args."""
+    return text.replace("\x00", "").replace("\r", "")
+
 def _evaluate_cli(url, raw, context, model):
     if shutil.which("claude") is None:
         raise AgentError("claude binary not found — install Claude Code or use --no-agent")
 
     model_id = MODEL_ALIASES.get(model, model)
-    system = _build_system_prompt(context)
-    user_msg = f"URL: {url}\n\nContent:\n{raw[:MAX_CONTENT_CHARS]}"
-    full_prompt = f"{system}\n\n{user_msg}"
+    system = _sanitize(_build_system_prompt(context))
+    user_msg = _sanitize(f"URL: {url}\n\nContent:\n{raw[:MAX_CONTENT_CHARS]}")
 
     result = subprocess.run(
-        ["claude", "-p", full_prompt, "--model", model_id, "--output-format", "text"],
+        ["claude", "-p", user_msg, "--system", system,
+         "--model", model_id, "--output-format", "text"],
         capture_output=True,
         text=True,
         timeout=120,
@@ -92,6 +96,10 @@ def _evaluate_cli(url, raw, context, model):
 
     return _parse_mapping(result.stdout.strip())
 ```
+
+Note: `subprocess.run` with a list (not `shell=True`) means shell injection is not a concern —
+args are passed directly to the OS. `_sanitize` guards against null bytes and stray CR characters
+that could corrupt argument parsing in some environments.
 
 Extract the JSON parse + validate logic into `_parse_mapping(raw_text: str) -> Mapping`
 so both backends share it.
@@ -140,7 +148,8 @@ Pass `backend` to `agent.evaluate(url, raw, ctx, model, backend=backend)`.
 
 4. Update `tests/test_agent.py`:
    - `test_r01_cli_backend_calls_subprocess` — monkeypatch `subprocess.run` to return
-     valid JSON; assert `evaluate(..., backend="cli")` returns correct Mapping.
+     valid JSON; assert `evaluate(..., backend="cli")` returns correct Mapping; assert
+     subprocess called with `"--system"` as one of the args (not concatenated into `-p`).
    - `test_r02_cli_backend_no_binary` — monkeypatch `shutil.which` to return None;
      assert AgentError raised with "claude binary not found".
    - `test_r03_cli_backend_nonzero_exit` — subprocess returns returncode=1; assert
@@ -149,6 +158,8 @@ Pass `backend` to `agent.evaluate(url, raw, ctx, model, backend=backend)`.
    - `test_r05_sdk_backend_unchanged` — existing SDK tests still pass unchanged.
    - `test_r06_parse_mapping_shared` — call `_parse_mapping` directly with valid JSON;
      assert correct Mapping returned.
+   - `test_r07_sanitize_strips_nulls` — call `_sanitize` with a string containing null
+     bytes and CR characters; assert neither appears in the result.
 
 5. Update `tests/test_config.py`:
    - `test_agent_backend_default` — empty config; assert `cfg.agent_backend == "sdk"`.

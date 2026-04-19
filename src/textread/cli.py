@@ -8,6 +8,8 @@ from pathlib import Path
 import click
 import yaml
 
+import subprocess
+
 from textread import __version__
 from textread import agent, cache, context, fetch
 from textread.agent import AgentError, Mapping
@@ -63,8 +65,19 @@ class _CacheProxy:
         return cache.exists(url, self._cfg)
 
 
+try:
+    _git_hash = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        stderr=subprocess.DEVNULL, text=True,
+        cwd=Path(__file__).parent,
+    ).strip()
+    _version_str = f"{__version__} ({_git_hash})"
+except Exception:
+    _version_str = __version__
+
+
 @click.group()
-@click.version_option(__version__)
+@click.version_option(_version_str, "--version", "-V", prog_name="textread")
 def main():
     """Context-aware link reader."""
 
