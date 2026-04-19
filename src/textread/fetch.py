@@ -7,8 +7,12 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
+import warnings
+
 import httpx
-import newspaper
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+    import newspaper
 from readability import Document  # type: ignore[import-untyped]
 
 from textread import __version__
