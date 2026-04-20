@@ -173,5 +173,43 @@ def remap_cmd(url: str, model: str | None, ctx_path: str | None, deep: bool, no_
     _print_output(mapping, deep)
 
 
+_COMPLETION_PATHS = {
+    "fish": Path("~/.config/fish/completions/textread.fish"),
+    "bash": Path("~/.local/share/bash-completion/completions/textread"),
+    "zsh": Path("~/.zfunc/_textread"),
+}
+
+
+@main.command(name="install")
+@click.option("--shell", type=click.Choice(["fish", "bash", "zsh"]), default=None,
+              help="Shell to install completions for (default: auto-detect).")
+def install_cmd(shell: str | None):
+    """Install shell completions for fish, bash, or zsh."""
+    import os
+
+    if shell is None:
+        shell_path = os.environ.get("SHELL", "")
+        if "fish" in shell_path:
+            shell = "fish"
+        elif "zsh" in shell_path:
+            shell = "zsh"
+        elif "bash" in shell_path:
+            shell = "bash"
+        else:
+            click.echo("[ERROR] Could not detect shell. Use --shell fish|bash|zsh", err=True)
+            sys.exit(1)
+
+    env = {**os.environ, f"_TEXTREAD_COMPLETE": f"{shell}_source"}
+    result = subprocess.run(["textread"], env=env, capture_output=True, text=True)
+    if not result.stdout.strip():
+        click.echo(f"[ERROR] Failed to generate {shell} completions", err=True)
+        sys.exit(1)
+
+    target = _COMPLETION_PATHS[shell].expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(result.stdout)
+    click.echo(f"Completions written to {target}")
+
+
 main.add_command(context_group, "context")
 main.add_command(cache_group, "cache")
