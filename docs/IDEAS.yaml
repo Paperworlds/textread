@@ -1,0 +1,87 @@
+# textread — Ideas backlog
+# Format: each idea has a slug, status, and enough context to act on later.
+# Statuses: idea | exploring | planned | parked
+
+ideas:
+
+  browser_fetch_backend:
+    status: idea
+    title: Browser fetch backend via browser-harness
+    source: https://github.com/browser-use/browser-harness
+    summary: |
+      Add a third fetch backend (fetch_backend: browser) for JS-heavy pages,
+      SPAs, and paywalled content that httpx + newspaper4k can't reach.
+      browser-harness connects to Chrome via CDP (~600 lines, no framework).
+    config_key: "fetch_backend: browser  # http | newspaper | browser"
+    tradeoff: Heavy dep (Chrome + CDP). Only worth it for sites that render client-side.
+    trigger: When users report blank or truncated raw.md on SPA-heavy URLs.
+
+  pdf_to_md:
+    status: idea
+    title: PDF → raw.md conversion
+    summary: |
+      Allow textread read <path-or-url-to-pdf> to produce raw.md from a PDF,
+      feeding it through the same agent pipeline as web pages.
+    options:
+      pymupdf4llm:
+        pip: pymupdf4llm
+        notes: |
+          Fastest option, no ML/GPU. Detects headers, tables, multi-column layouts.
+          Best for native (text-embedded) PDFs. OCR optional.
+          Sweet spot: speed + quality for most docs.
+        verdict: first choice
+      marker_pdf:
+        pip: marker-pdf
+        notes: |
+          Better structure preservation than pymupdf4llm, especially for complex layouts.
+          Slower (~11s vs <1s). ML-based.
+        verdict: fallback for complex/scanned PDFs
+    implementation_sketch: |
+      In fetch.py: detect if input is a .pdf path or PDF MIME type.
+      Run pymupdf4llm.to_markdown(path) → write to raw.md directly.
+      Skip the httpx + readability path entirely.
+    sources:
+      - https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/
+      - https://themenonlab.blog/blog/best-open-source-pdf-to-markdown-tools-2026
+
+  google_docs_to_md:
+    status: idea
+    title: Google Docs → raw.md conversion
+    summary: |
+      Allow textread read <google-docs-url> to export the doc as markdown
+      and feed it through the agent pipeline.
+    options:
+      google_docs_api:
+        notes: |
+          Export via Google Docs API (exportLinks, MIME type text/plain or
+          application/vnd.openxmlformats-officedocument.wordprocessingml.document).
+          Then convert docx → md with pandoc or python-docx.
+          Requires OAuth / service account — significant auth overhead.
+        verdict: most reliable, most setup
+      gdoc2md_web:
+        url: https://gdoc2md.com/
+        notes: |
+          Web tool, not scriptable. Not useful for textread.
+        verdict: parked
+      gd2md_html_addon:
+        notes: |
+          Google Docs add-on (manual, in-browser). Not automatable from CLI.
+        verdict: parked
+      native_copy_as_markdown:
+        notes: |
+          Google Docs has Tools > Preferences > Enable Markdown → "Copy as Markdown".
+          No API access, manual only.
+        verdict: parked
+    implementation_sketch: |
+      Detect google docs URL pattern (docs.google.com/document/d/<id>).
+      Use Google Docs API export endpoint with docx MIME type.
+      Pipe through pandoc (subprocess) or python-mammoth for docx → md.
+      Auth: recommend service account JSON path in config.
+    config_sketch: |
+      google_docs_credentials: ~/.config/paperworlds/gdocs-credentials.json
+    tradeoff: |
+      OAuth setup is the main friction. Without it, only publicly shared docs
+      can be fetched (via the HTML export URL, which loses structure).
+    sources:
+      - https://github.com/AnandChowdhary/docs-markdown
+      - https://workspace.google.com/marketplace/app/docs_to_markdown/700168918607
