@@ -1,0 +1,17 @@
+version: 1
+
+prompts_dir: prompts/
+state_dir: logs/
+reports_dir: reports/
+
+repos:
+  textread: .
+
+defaults:
+  model: haiku
+  budget_usd: 1.00
+  max_turns: 80
+
+max_parallel: 1
+total_budget_usd: 12.00
+warn_at_pct: 80

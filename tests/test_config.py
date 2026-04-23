@@ -119,3 +119,36 @@ def test_default_profile_set(tmp_path, monkeypatch):
     monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
     cfg = config_mod.load()
     assert cfg.default_profile == "personal"
+
+
+# ---------------------------------------------------------------------------
+# 012 — pdf_backend config field
+# ---------------------------------------------------------------------------
+
+def test_pdf_backend_default(tmp_path, monkeypatch):
+    """Empty config defaults pdf_backend to 'native'."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.pdf_backend == "native"
+
+
+def test_pdf_backend_marker(tmp_path, monkeypatch):
+    """pdf_backend: marker is loaded correctly."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {"pdf_backend": "marker"})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.pdf_backend == "marker"
+
+
+def test_pdf_backend_invalid(tmp_path, monkeypatch, capsys):
+    """Invalid pdf_backend warns and defaults to 'native'."""
+    cfg_file = tmp_path / "textread.yaml"
+    _write_config(cfg_file, {"pdf_backend": "turbo"})
+    monkeypatch.setattr(config_mod, "_CONFIG_PATH", cfg_file)
+    cfg = config_mod.load()
+    assert cfg.pdf_backend == "native"
+    captured = capsys.readouterr()
+    assert "[WARN]" in captured.out

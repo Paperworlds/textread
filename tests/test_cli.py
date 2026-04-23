@@ -505,3 +505,168 @@ def test_profile_with_sdk_backend_warns(runner, monkeypatch):
     assert result.exit_code == 0, result.output
     # CliRunner with mix_stderr=True (default) merges stderr into output
     assert "[WARN]" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 012 — url command (explicit web pipeline)
+# ---------------------------------------------------------------------------
+
+def test_url_cmd_basic(runner, mock_deps):
+    """`textread url <url>` runs the same pipeline as old `read`."""
+    result = runner.invoke(main, ["url", URL])
+    assert result.exit_code == 0, result.output
+    assert "WORTH_READING" in result.output
+
+
+def test_url_cmd_no_agent(runner, monkeypatch):
+    """`textread url --no-agent` skips agent and prints [CACHED]."""
+    import textread.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["url", URL, "--no-agent"])
+    assert result.exit_code == 0, result.output
+    assert "[CACHED]" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 012 — pdf command
+# ---------------------------------------------------------------------------
+
+def test_pdf_cmd_basic(runner, monkeypatch, tmp_path):
+    """`textread pdf <file>` extracts, caches, runs agent, prints verdict."""
+    import textread.cli as cli_mod
+
+    pdf_file = tmp_path / "paper.pdf"
+    pdf_file.write_bytes(b"%PDF fake")
+
+    from textread.fetch import FetchResult
+    fake_result = FetchResult(
+        url=pdf_file.as_uri(), final_url=pdf_file.as_uri(),
+        text="# PDF content", content_type="application/pdf",
+        fetched_at="2026-01-01T00:00:00Z",
+    )
+    monkeypatch.setattr(cli_mod.fetch, "fetch_pdf", lambda source, pages=None, backend="native": fake_result)
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "# PDF content")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: _make_mapping())
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["pdf", str(pdf_file)])
+    assert result.exit_code == 0, result.output
+    assert "WORTH_READING" in result.output
+
+
+def test_pdf_cmd_no_agent(runner, monkeypatch, tmp_path):
+    """`textread pdf --no-agent` extracts, caches, skips agent."""
+    import textread.cli as cli_mod
+
+    pdf_file = tmp_path / "paper.pdf"
+    pdf_file.write_bytes(b"%PDF fake")
+
+    from textread.fetch import FetchResult
+    fake_result = FetchResult(
+        url=pdf_file.as_uri(), final_url=pdf_file.as_uri(),
+        text="# PDF content", content_type="application/pdf",
+        fetched_at="2026-01-01T00:00:00Z",
+    )
+    agent_called = []
+    monkeypatch.setattr(cli_mod.fetch, "fetch_pdf", lambda source, pages=None, backend="native": fake_result)
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "# PDF content")
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda *a, **kw: agent_called.append(True) or _make_mapping())
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["pdf", str(pdf_file), "--no-agent"])
+    assert result.exit_code == 0, result.output
+    assert "[CACHED]" in result.output
+    assert agent_called == []
+
+
+def test_pdf_cmd_cache_hit_skips_extraction(runner, monkeypatch, tmp_path):
+    """pdf with cached entry skips fetch_pdf entirely."""
+    import textread.cli as cli_mod
+
+    pdf_file = tmp_path / "paper.pdf"
+    pdf_file.write_bytes(b"%PDF fake")
+
+    fetch_called = []
+    monkeypatch.setattr(cli_mod.fetch, "fetch_pdf", lambda *a, **kw: fetch_called.append(True))
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: True)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "cached md")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: _make_mapping())
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["pdf", str(pdf_file)])
+    assert result.exit_code == 0, result.output
+    assert fetch_called == []
+
+
+# ---------------------------------------------------------------------------
+# 012 — read smart router
+# ---------------------------------------------------------------------------
+
+def test_read_routes_url(runner, mock_deps):
+    """`read` with an http URL routes to url pipeline and logs [READ] url."""
+    result = runner.invoke(main, ["read", URL])
+    assert result.exit_code == 0, result.output
+    assert "[READ] url →" in result.output
+    assert "WORTH_READING" in result.output
+
+
+def test_read_routes_pdf(runner, monkeypatch, tmp_path):
+    """`read` with a .pdf path routes to pdf pipeline and logs [READ] pdf."""
+    import textread.cli as cli_mod
+
+    pdf_file = tmp_path / "paper.pdf"
+    pdf_file.write_bytes(b"%PDF fake")
+
+    from textread.fetch import FetchResult
+    fake_result = FetchResult(
+        url=pdf_file.as_uri(), final_url=pdf_file.as_uri(),
+        text="# PDF", content_type="application/pdf",
+        fetched_at="2026-01-01T00:00:00Z",
+    )
+    monkeypatch.setattr(cli_mod.fetch, "fetch_pdf", lambda source, pages=None, backend="native": fake_result)
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "# PDF")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: _make_mapping())
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", str(pdf_file)])
+    assert result.exit_code == 0, result.output
+    assert "[READ] pdf →" in result.output
+    assert "WORTH_READING" in result.output
+
+
+def test_read_routes_pdf_url(runner, monkeypatch):
+    """`read` with a URL ending in .pdf routes to pdf pipeline."""
+    import textread.cli as cli_mod
+
+    PDF_URL = "https://arxiv.org/pdf/2401.00001.pdf"
+    from textread.fetch import FetchResult
+    fake_result = FetchResult(
+        url=PDF_URL, final_url=PDF_URL,
+        text="# Abstract", content_type="application/pdf",
+        fetched_at="2026-01-01T00:00:00Z",
+    )
+    monkeypatch.setattr(cli_mod.fetch, "fetch_pdf", lambda source, pages=None, backend="native": fake_result)
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "# Abstract")
+    monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
+    monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: _make_mapping())
+    monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
+
+    result = runner.invoke(main, ["read", PDF_URL])
+    assert result.exit_code == 0, result.output
+    assert "[READ] pdf →" in result.output

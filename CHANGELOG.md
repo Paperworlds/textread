@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.5
+
+- `textread pdf <file|url>` — extract PDF to markdown via pymupdf4llm, then run agent pipeline
+- `textread url <url>` — explicit web URL command (what `read` did before)
+- `textread read <source>` — smart router: auto-detects PDF vs web URL, logs `[READ] pdf →` or `[READ] url →`
+- `pdf_backend: native | marker` config key (marker backend planned, native is pymupdf4llm)
+- `--backend native|marker` and `--pages 1-5` flags on `textread pdf`
+
 ## v0.1.4
 
 - `textread install` — writes shell completions for fish, bash, or zsh (auto-detects shell)

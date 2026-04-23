@@ -1,12 +1,13 @@
 [project]
 name = "textread"
-version = "0.1.4"
+version = "0.1.5"
 requires-python = ">=3.13"
 dependencies = [
     "anthropic>=0.25",
     "click>=8.1",
     "httpx>=0.27",
     "newspaper4k>=0.9",
+    "pymupdf4llm>=0.0.17",
     "pyyaml>=6.0",
     "readability-lxml>=0.8",
 ]

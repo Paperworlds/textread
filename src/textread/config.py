@@ -5,7 +5,7 @@ import yaml
 
 
 _CONFIG_PATH = Path("~/.config/paperworlds/textread.yaml")
-_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend", "default_profile"}
+_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend", "default_profile", "pdf_backend"}
 
 
 @dataclasses.dataclass
@@ -16,6 +16,7 @@ class TextreadConfig:
     agent_enabled: bool = True
     agent_backend: str = "sdk"
     default_profile: str | None = None
+    pdf_backend: str = "native"
 
 
 def load() -> TextreadConfig:
@@ -35,6 +36,9 @@ def load() -> TextreadConfig:
     if "agent_backend" in known and known["agent_backend"] not in {"sdk", "cli"}:
         print(f"[WARN] agent_backend must be 'sdk' or 'cli' — got {known['agent_backend']!r}, defaulting to 'sdk'")
         known["agent_backend"] = "sdk"
+    if "pdf_backend" in known and known["pdf_backend"] not in {"native", "marker"}:
+        print(f"[WARN] pdf_backend must be 'native' or 'marker' — got {known['pdf_backend']!r}, defaulting to 'native'")
+        known["pdf_backend"] = "native"
     return TextreadConfig(**known)
 
 

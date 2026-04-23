@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -116,3 +117,58 @@ def pull(url: str, refresh: bool = False, cache=None) -> FetchResult | None:
         raise
     except Exception as exc:
         raise FetchError(str(exc)) from exc
+
+
+def fetch_pdf(source: str, pages: str | None = None, backend: str = "native") -> FetchResult:
+    """Extract text from a PDF (local path or remote URL) as markdown.
+
+    Args:
+        source: Local file path or http(s) URL pointing to a PDF.
+        pages: Optional page range, e.g. "1-5" or "3".
+        backend: Extraction backend — "native" (pymupdf4llm) or "marker" (planned).
+
+    Raises:
+        FetchError: On missing dependency, missing file, download failure, or extraction error.
+    """
+    if backend == "marker":
+        raise FetchError("marker backend not yet implemented — use --backend native")
+
+    if source.startswith(("http://", "https://")):
+        try:
+            resp = httpx.get(source, headers={"User-Agent": UA}, follow_redirects=True, timeout=30)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise FetchError(str(exc)) from exc
+        import os, tempfile
+        fd, tmp_name = tempfile.mkstemp(suffix=".pdf")
+        try:
+            os.write(fd, resp.content)
+            os.close(fd)
+            return _extract_pdf(source, Path(tmp_name), pages)
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+    else:
+        local = Path(source).expanduser().resolve()
+        if not local.exists():
+            raise FetchError(f"File not found: {source}")
+        return _extract_pdf(local.as_uri(), local, pages)
+
+
+def _extract_pdf(url: str, path: Path, pages: str | None) -> FetchResult:
+    try:
+        import pymupdf4llm  # type: ignore[import]
+    except ImportError:
+        raise FetchError("PDF support requires pymupdf4llm — run: pip install pymupdf4llm")
+
+    kwargs: dict = {}
+    if pages:
+        start, _, end = pages.partition("-")
+        kwargs["pages"] = list(range(int(start) - 1, int(end))) if end else [int(start) - 1]
+
+    try:
+        text = pymupdf4llm.to_markdown(str(path), **kwargs)
+    except Exception as exc:
+        raise FetchError(f"PDF extraction failed: {exc}") from exc
+
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return FetchResult(url=url, final_url=url, text=text, content_type="application/pdf", fetched_at=fetched_at)

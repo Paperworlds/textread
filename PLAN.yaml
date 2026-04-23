@@ -1,0 +1,190 @@
+# textread — Build Plan
+# Context-aware link reader. URL in, relevance verdict + context-lensed summary out.
+# Full spec: paperworlds/textworkspace/docs/IDEAS.yaml (developer_workflow → textread)
+
+date: 2026-04-18
+author: paulie
+status: scaffolding
+repo: paperworlds/textread   # to create, public, EL2
+
+principles:
+  - Small surface. Sync only. Claude only at v1.
+  - Fetch once, map many. Raw is the archive; mapping.yaml is the interpretation.
+  - Fresh subagent per read — predictable cost, clean main context.
+  - Haiku default, --model override. Typical read in cents.
+  - textmap-compatible mapping shape from day one (even though textmap doesn't ship yet).
+
+layout:
+  package: src/textread/
+  modules:
+    - __init__.py       # version
+    - cli.py            # click group: read, remap, context, cache
+    - fetch.py          # newspaper4k wrapper, robots.txt, UA, dedupe
+    - cache.py          # ~/.textread/cache/<slug|hash>/ layout, read/write
+    - agent.py          # Anthropic SDK call, prompt, output schema
+    - context.py        # load/save read-context.yaml
+    - config.py         # ~/.config/paperworlds/textread.yaml resolution
+  tests: tests/
+  entry_point: textread
+
+cache_layout: |
+  ~/.textread/cache/<slug-or-hash>/
+    raw.<ext>         # html/pdf/txt as fetched — archived, never sent to LLM
+    raw.md            # cleaned markdown — what the agent receives
+    raw.meta.json     # url, fetched_at, content-type, final-url, status
+    mapping.yaml      # verdict + summary + extract (regeneratable)
+
+cli:
+  - textread <url>                          # fetch (if needed), map, print
+  - textread <url> --model sonnet           # override model
+  - textread <url> --context <path>         # one-off context override
+  - textread <url> --refresh                # force re-fetch
+  - textread <url> --save                   # append to reading log
+  - textread remap <url>                    # re-run agent on cached raw
+  - textread context show|edit              # manage stored user context
+  - textread cache list|path <url>|clear    # cache management
+
+tasks:
+
+  - id: 1
+    title: Repo scaffolding
+    status: pending
+    priority: 1
+    description: uv-managed Python package, pyproject.toml, entry point, CLAUDE.md, LICENSE (EL2).
+    steps:
+      - uv init --package textread
+      - pyproject.toml — python >=3.13, click, pyyaml, anthropic, newspaper4k, httpx
+      - LICENSE — Elastic License 2.0
+      - README.md — one-paragraph pitch + usage
+      - CLAUDE.md — match textworkspace style (project, running, git, testing)
+      - .gitignore — python defaults + .textread/
+    done_when: uv run textread --help prints placeholder group.
+
+  - id: 2
+    title: Config + context
+    status: pending
+    priority: 2
+    description: Load/save textread config and user read-context.yaml.
+    files:
+      - src/textread/config.py
+      - src/textread/context.py
+      - tests/test_config.py
+    config_shape:
+      cache_root: ~/.textread/cache
+      default_model: haiku
+      context_path: ~/.config/paperworlds/read-context.yaml
+    context_shape:
+      role: "developer"
+      stack: ["python", "claude-code", "textworld"]
+      projects:
+        - name: paperworlds
+          summary: "Text-based multiplayer RPG + AI dev tooling stack."
+          current: ["textserve release", "textforums rollout"]
+      filters:
+        downweight: ["crypto price action", "nocode builders"]
+    done_when: textread context show|edit round-trips YAML cleanly.
+
+  - id: 3
+    title: Fetch layer
+    status: pending
+    priority: 3
+    description: newspaper4k-backed fetch with robots.txt + UA + dedupe.
+    files:
+      - src/textread/fetch.py
+      - tests/test_fetch.py   # mock httpx, no network
+    behavior:
+      - robots.txt check via urllib.robotparser — refuse blocked paths.
+      - User-Agent = "textread/<version> (+https://github.com/paperworlds/textread)"
+      - On success: write raw.<ext> + raw.meta.json into cache dir.
+      - Skip if cache exists unless --refresh passed.
+    library: newspaper (https://github.com/AndyTheFactory/newspaper4k)
+    fallback: readability-lxml + httpx if newspaper4k proves flaky.
+    done_when: fetching a known URL twice hits cache the second time.
+
+  - id: 4
+    title: Cache layer
+    status: pending
+    priority: 4
+    description: Directory layout, slug+hash key, read/write helpers.
+    files:
+      - src/textread/cache.py
+      - tests/test_cache.py
+    key_strategy: slug from URL path + short hash suffix for uniqueness.
+    done_when: cache.get(url), cache.put(url, raw, meta), cache.path(url) all work.
+
+  - id: 5
+    title: Agent layer
+    status: pending
+    priority: 5
+    description: Anthropic SDK direct call. Fresh call per read. Structured output.
+    files:
+      - src/textread/agent.py
+      - tests/test_agent.py   # mock Anthropic client
+    prompt_inputs:
+      - url + raw content (trimmed to model context)
+      - user context (role, stack, projects, filters)
+      - output schema (verdict, score, summary, extract, tags)
+    output_schema: |
+      verdict: worth_reading | skim | skip
+      score: 0-100
+      reason: "one-line why for this user"
+      summary: "<=200 words, lensed through user context"
+      key_points: ["...", "..."]
+      connects_to: ["paperworlds/textserve", ...]  # project names from context
+      tags: ["mcp", "k8s", ...]
+    model:
+      default: claude-haiku-4-5-20251001
+      override: --model <alias>  (haiku|sonnet|opus map to latest IDs)
+      provider: Anthropic SDK only (no multi-provider abstraction)
+    done_when: agent.evaluate(raw, context) returns a validated dataclass.
+
+  - id: 6
+    title: CLI — read + remap
+    status: pending
+    priority: 6
+    description: Wire fetch → cache → agent → pretty output.
+    files:
+      - src/textread/cli.py
+      - tests/test_cli.py
+    flow: |
+      textread <url>
+        1. cache.get(url) or fetch.pull(url) → raw + meta
+        2. context.load()
+        3. agent.evaluate(raw, context, model) → mapping
+        4. cache.write_mapping(url, mapping)
+        5. render verdict + summary to stdout
+      textread remap <url>
+        skip step 1 fetch — require cache hit, re-run 3-5.
+    done_when: end-to-end works against a stubbed fetch + stubbed agent in tests.
+
+  - id: 7
+    title: Reading log + --save
+    status: pending
+    priority: 7
+    description: Optional append to ~/.textread/log.yaml when --save passed.
+    note: Feeds the future textmap integration. Shape kept graph-compatible.
+    done_when: --save appends a dated entry with url, verdict, tags, mapping path.
+
+  - id: 8
+    title: Publish
+    status: pending
+    priority: 8
+    description: Push to paperworlds/textread (public, EL2). Flip landing-page badge.
+    steps:
+      - gh repo create paperworlds/textread --public --license "Elastic-2.0" (or hand-rolled)
+      - git remote add origin … && git push -u origin main
+      - Update paperworlds.github.io card 10 — remove "coming soon" once published with working CLI.
+    done_when: uv pip install textread works from a clean venv.
+
+open_questions:
+  - Output shape — default terse one-liner verdict with --deep for full summary? Or always full?
+  - Cache invalidation — TTL, or manual --refresh only? Leaning manual.
+  - Slug vs hash — slug is nicer, hash avoids collisions. Maybe slug + 6-char hash suffix.
+  - Subagent invocation path — Anthropic SDK direct (simpler, cheaper) vs Claude Code Agent SDK. Leaning direct.
+  - PDFs, YouTube transcripts, paywalled content — out of scope for v1, note in README.
+
+future:
+  - textmap bridge — when textmap ships, mapping.yaml becomes a node. Raw stays local.
+  - Batch mode — read a file of URLs, emit a ranked report.
+  - Claude Code slash command — /read <url> from inside a session.
+  - Feed IDEAS.yaml — high-relevance reads auto-suggest a references entry.

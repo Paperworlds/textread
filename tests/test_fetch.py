@@ -12,6 +12,7 @@ from textread.fetch import (
     FetchBlocked,
     FetchError,
     FetchResult,
+    fetch_pdf,
     pull,
 )
 
@@ -137,6 +138,70 @@ def test_r05_refresh_bypasses_cache():
 
     assert result is not None
     assert result.text == SAMPLE_TEXT
+
+
+# ---------------------------------------------------------------------------
+# 012 — fetch_pdf
+# ---------------------------------------------------------------------------
+
+def test_fetch_pdf_local_file(tmp_path, monkeypatch):
+    """fetch_pdf on a local .pdf path calls pymupdf4llm.to_markdown."""
+    import sys, types
+    pdf_file = tmp_path / "test.pdf"
+    pdf_file.write_bytes(b"%PDF-1.4 fake")
+
+    fake_mod = types.ModuleType("pymupdf4llm")
+    fake_mod.to_markdown = lambda path, **kw: "# Extracted markdown"
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_mod)
+
+    result = fetch_pdf(str(pdf_file))
+
+    assert isinstance(result, FetchResult)
+    assert result.text == "# Extracted markdown"
+    assert result.content_type == "application/pdf"
+    assert result.url.startswith("file://")
+    assert result.fetched_at.endswith("Z")
+
+
+def test_fetch_pdf_missing_file():
+    """fetch_pdf raises FetchError when local file does not exist."""
+    with pytest.raises(FetchError, match="File not found"):
+        fetch_pdf("/tmp/does_not_exist_abc123.pdf")
+
+
+def test_fetch_pdf_missing_dep(tmp_path, monkeypatch):
+    """fetch_pdf raises FetchError when pymupdf4llm is not installed."""
+    import sys
+    pdf_file = tmp_path / "test.pdf"
+    pdf_file.write_bytes(b"%PDF fake")
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", None)
+
+    with pytest.raises(FetchError, match="pymupdf4llm"):
+        fetch_pdf(str(pdf_file))
+
+
+def test_fetch_pdf_pages_range(tmp_path, monkeypatch):
+    """pages='1-3' is converted to 0-indexed list [0,1,2]."""
+    import sys, types
+    pdf_file = tmp_path / "test.pdf"
+    pdf_file.write_bytes(b"%PDF fake")
+
+    captured_kwargs: dict = {}
+    fake_mod = types.ModuleType("pymupdf4llm")
+    def fake_to_markdown(path, **kw):
+        captured_kwargs.update(kw)
+        return "# page content"
+    fake_mod.to_markdown = fake_to_markdown
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_mod)
+
+    fetch_pdf(str(pdf_file), pages="1-3")
+    assert captured_kwargs.get("pages") == [0, 1, 2]
+
+
+def test_fetch_pdf_marker_backend():
+    """marker backend raises FetchError (not yet implemented)."""
+    with pytest.raises(FetchError, match="marker backend not yet implemented"):
+        fetch_pdf("/any/path.pdf", backend="marker")
 
 
 # ---------------------------------------------------------------------------
