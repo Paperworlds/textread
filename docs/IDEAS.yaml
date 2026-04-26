@@ -17,7 +17,7 @@ ideas:
     trigger: When users report blank or truncated raw.md on SPA-heavy URLs.
 
   pdf_to_md:
-    status: idea
+    status: done
     title: PDF → raw.md conversion
     summary: |
       Allow textread read <path-or-url-to-pdf> to produce raw.md from a PDF,
