@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.6
+
+- ci: install `libxml2-dev` and `libxslt1-dev` before `uv sync` — `lxml==5.4.0` (required transitively by `readability-lxml`) had no prebuilt wheel for Python 3.14 on Linux and was failing source-build on the runner
+
 ## v0.1.5
 
 - `textread pdf <file|url>` — extract PDF to markdown via pymupdf4llm, then run agent pipeline

@@ -11,4 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Install lxml build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxml2-dev libxslt1-dev
       - run: uv run pytest tests/ -v
