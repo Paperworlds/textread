@@ -94,8 +94,6 @@ agent_enabled: true           # set false to default to --no-agent
 agent_backend: sdk            # sdk | cli (claude Code's auth)
 default_profile: personal     # textaccounts profile for cli backend
 pdf_backend: native           # native (pymupdf4llm) | marker (planned)
-raindrop_token: your-token    # from app.raindrop.io/settings/integrations
-raindrop_collection: textread # collection name to pull from (default: textread)
 ```
 
 Context (role, stack, projects) lives at `~/.config/paperworlds/read-context.yaml`.
@@ -108,13 +106,24 @@ Context (role, stack, projects) lives at `~/.config/paperworlds/read-context.yam
 
 The `--via-cli` flag shells out to `claude -p` instead of calling the Anthropic SDK directly — same auth Claude Code uses, no separate API key required.
 
-### Raindrop.io setup
+## Integrations
 
-1. Create a free account at [raindrop.io](https://raindrop.io) and add a collection called `textread`
+### Raindrop.io
+
+Save links from your browser or phone to a Raindrop collection; `textread pull` drains it into the inbox.
+
+**Setup:**
+
+1. Create a free account at [raindrop.io](https://raindrop.io) and create a collection called `textread`
 2. Get your API token at `app.raindrop.io/settings/integrations` → Create test token
-3. Add `raindrop_token` to `~/.config/paperworlds/textread.yaml`
-4. Save any URL to the `textread` collection from the Raindrop browser extension or Android app
-5. Run `textread pull` — items are fetched, cached, added to the inbox, and removed from Raindrop
+3. Add to `~/.config/paperworlds/textread.yaml`:
+   ```yaml
+   raindrop_token: your-token
+   raindrop_collection: textread
+   ```
+4. Install the [browser extension](https://raindrop.io/download) or [Android app](https://play.google.com/store/apps/details?id=io.raindrop.raindropio)
+5. Save URLs to the `textread` collection throughout the day
+6. Run `textread pull` — each item is fetched, cached, queued in the inbox, and removed from Raindrop
 
 ## Roadmap
 
