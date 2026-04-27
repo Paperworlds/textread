@@ -456,6 +456,64 @@ def digest_cmd(model, via_cli, profile, do_clear):
         click.echo(f"[INBOX] {len(locked_entries)} item(s) cleared.", err=True)
 
 
+@main.command(name="pull")
+def pull_cmd():
+    """Pull bookmarks from Raindrop.io into the inbox, then delete them from Raindrop."""
+    from textread import inbox as inbox_mod, raindrop
+
+    cfg = load_config()
+    if not cfg.raindrop_token:
+        click.echo("[ERROR] raindrop_token not set in ~/.config/paperworlds/textread.yaml", err=True)
+        sys.exit(1)
+
+    try:
+        col_id = raindrop.find_collection(cfg.raindrop_token, cfg.raindrop_collection)
+    except Exception as e:
+        click.echo(f"[ERROR] Raindrop API error: {e}", err=True)
+        sys.exit(1)
+
+    if col_id is None:
+        click.echo(f"[ERROR] Collection '{cfg.raindrop_collection}' not found in Raindrop", err=True)
+        sys.exit(1)
+
+    try:
+        items = raindrop.fetch_items(cfg.raindrop_token, col_id)
+    except Exception as e:
+        click.echo(f"[ERROR] Raindrop API error: {e}", err=True)
+        sys.exit(1)
+
+    if not items:
+        click.echo("Raindrop collection is empty.")
+        return
+
+    added = 0
+    for item in items:
+        url = item.get("link", "")
+        title = item.get("title", "") or url
+        item_id = item["_id"]
+        if not url:
+            continue
+        try:
+            result = fetch.pull(url, cache=_CacheProxy(cfg))
+            if result is not None:
+                cache.put(url, result, cfg)
+        except FetchBlocked as e:
+            click.echo(f"[WARN] Blocked by robots.txt: {url} — {e}", err=True)
+            continue
+        except FetchError as e:
+            click.echo(f"[WARN] Fetch failed: {url} — {e}", err=True)
+            continue
+        inbox_mod.add(url, "url", title, url)
+        try:
+            raindrop.delete_item(cfg.raindrop_token, item_id)
+        except Exception as e:
+            click.echo(f"[WARN] Could not delete Raindrop item {item_id}: {e}", err=True)
+        click.echo(f"[PULL] {title}")
+        added += 1
+
+    click.echo(f"\n{added} item(s) added to inbox.")
+
+
 main.add_command(context_group, "context")
 main.add_command(cache_group, "cache")
 main.add_command(digests_group, "digests")

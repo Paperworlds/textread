@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.1
+
+- `textread pull` — drain a Raindrop.io collection into the inbox: fetches each URL, caches it, adds to inbox, deletes from Raindrop
+- `raindrop_token` and `raindrop_collection` config keys
+- README: Raindrop.io setup instructions
+
 ## v0.2.0
 
 - Per-item locking during digest: items being processed move to `inbox.processing.jsonl`; `add` is always open and never blocked

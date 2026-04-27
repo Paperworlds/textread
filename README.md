@@ -47,6 +47,9 @@ textread add https://example.com/article
 textread add ~/Downloads/paper.pdf
 textread add ~/notes/meeting.md
 
+# Pull bookmarks from Raindrop.io into the inbox
+textread pull
+
 # See what's queued
 textread inbox
 
@@ -59,7 +62,7 @@ textread digest --model sonnet --via-cli --clear
 
 The digest is saved to `~/.local/state/paperworlds/textread/digests/YYYY-MM-DD.md`.
 
-While a digest is running, the items being processed are locked. New `add` calls still work — they queue for the next digest.
+While a digest is running, the items being processed are locked. New `add` and `pull` calls still work — they queue for the next digest.
 
 ### Managing digests
 
@@ -91,6 +94,8 @@ agent_enabled: true           # set false to default to --no-agent
 agent_backend: sdk            # sdk | cli (claude Code's auth)
 default_profile: personal     # textaccounts profile for cli backend
 pdf_backend: native           # native (pymupdf4llm) | marker (planned)
+raindrop_token: your-token    # from app.raindrop.io/settings/integrations
+raindrop_collection: textread # collection name to pull from (default: textread)
 ```
 
 Context (role, stack, projects) lives at `~/.config/paperworlds/read-context.yaml`.
@@ -102,6 +107,14 @@ Context (role, stack, projects) lives at `~/.config/paperworlds/read-context.yam
 `textread add` does the same fetch-and-cache step but skips the agent and queues the source in the inbox instead. `textread digest` then reads all queued items at once and asks Claude to synthesize them into a research digest: per-item summaries, shared themes, and a brainstorm section. The digest is saved as a dated markdown file so you can review it later.
 
 The `--via-cli` flag shells out to `claude -p` instead of calling the Anthropic SDK directly — same auth Claude Code uses, no separate API key required.
+
+### Raindrop.io setup
+
+1. Create a free account at [raindrop.io](https://raindrop.io) and add a collection called `textread`
+2. Get your API token at `app.raindrop.io/settings/integrations` → Create test token
+3. Add `raindrop_token` to `~/.config/paperworlds/textread.yaml`
+4. Save any URL to the `textread` collection from the Raindrop browser extension or Android app
+5. Run `textread pull` — items are fetched, cached, added to the inbox, and removed from Raindrop
 
 ## Roadmap
 
