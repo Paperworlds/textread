@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.9
+
+- `textread digests list` — list all saved digests with `pending` / `reviewed` status and source count
+- `textread digests show <id>` — page through a saved digest (e.g. `2026-04-27`)
+- `textread digests review <id>` — mark a digest as reviewed (writes sidecar `.state` file)
+- Moved digest save logic into `src/textread/digests.py` module
+
 ## v0.1.8
 
 - `textread digest` auto-saves output to `~/.local/state/paperworlds/textread/digests/YYYY-MM-DD.md`

@@ -794,7 +794,8 @@ def test_digest_calls_agent_and_prints(runner, monkeypatch, tmp_path, patch_inbo
     """`textread digest` collects cached content, calls agent.digest, saves file."""
     import textread.cli as cli_mod
 
-    monkeypatch.setattr(cli_mod, "_DIGESTS_DIR", tmp_path / "digests")
+    import textread.digests as digests_mod
+    monkeypatch.setattr(digests_mod, "DIGESTS_DIR", tmp_path / "digests")
     patch_inbox.add("https://a.com", "url", "A", "https://a.com")
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda key, cfg: "content of a")
     monkeypatch.setattr(cli_mod.agent, "digest",
@@ -813,7 +814,8 @@ def test_digest_clear_flag_removes_inbox(runner, monkeypatch, tmp_path, patch_in
     """`textread digest --clear` clears the inbox after digest."""
     import textread.cli as cli_mod
 
-    monkeypatch.setattr(cli_mod, "_DIGESTS_DIR", tmp_path / "digests")
+    import textread.digests as digests_mod
+    monkeypatch.setattr(digests_mod, "DIGESTS_DIR", tmp_path / "digests")
     patch_inbox.add("https://a.com", "url", "A", "https://a.com")
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda key, cfg: "text")
     monkeypatch.setattr(cli_mod.agent, "digest",
@@ -829,7 +831,8 @@ def test_digest_skips_missing_cache(runner, monkeypatch, tmp_path, patch_inbox):
     import textread.cli as cli_mod
     from textread.cache import CacheError
 
-    monkeypatch.setattr(cli_mod, "_DIGESTS_DIR", tmp_path / "digests")
+    import textread.digests as digests_mod
+    monkeypatch.setattr(digests_mod, "DIGESTS_DIR", tmp_path / "digests")
     patch_inbox.add("https://a.com", "url", "A", "https://a.com")
     monkeypatch.setattr(cli_mod.cache, "get_markdown",
                         lambda key, cfg: (_ for _ in ()).throw(CacheError("missing")))
@@ -837,3 +840,73 @@ def test_digest_skips_missing_cache(runner, monkeypatch, tmp_path, patch_inbox):
     result = runner.invoke(main, ["digest"])
     assert result.exit_code == 1
     assert "[WARN]" in result.output or "No cached content" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 013 — digests list/show/review commands
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def patch_digests(monkeypatch, tmp_path):
+    import textread.digests as digests_mod
+    monkeypatch.setattr(digests_mod, "DIGESTS_DIR", tmp_path / "digests")
+    return digests_mod
+
+
+def test_digests_list_empty(runner, patch_digests):
+    result = runner.invoke(main, ["digests", "list"])
+    assert result.exit_code == 0, result.output
+    assert "No digests" in result.output
+
+
+def test_digests_list_shows_pending(runner, patch_digests, tmp_path):
+    d = tmp_path / "digests"
+    d.mkdir()
+    (d / "2026-04-27.md").write_text(
+        "# Digest — 2026-04-27\n\n## Sources\n\n- [pdf] a.pdf\n- [url] b.com\n\n---\n\nContent\n"
+    )
+    result = runner.invoke(main, ["digests", "list"])
+    assert result.exit_code == 0, result.output
+    assert "2026-04-27" in result.output
+    assert "pending" in result.output
+    assert "2 source" in result.output
+
+
+def test_digests_review_marks_file(runner, patch_digests, tmp_path):
+    d = tmp_path / "digests"
+    d.mkdir()
+    (d / "2026-04-27.md").write_text("# Digest\n\n## Sources\n\n- [pdf] a.pdf\n")
+    result = runner.invoke(main, ["digests", "review", "2026-04-27"])
+    assert result.exit_code == 0, result.output
+    assert "marked reviewed" in result.output
+    assert (d / "2026-04-27.state").read_text().strip() == "reviewed"
+
+
+def test_digests_list_shows_reviewed(runner, patch_digests, tmp_path):
+    d = tmp_path / "digests"
+    d.mkdir()
+    (d / "2026-04-27.md").write_text("# Digest\n\n## Sources\n\n- [pdf] a.pdf\n")
+    (d / "2026-04-27.state").write_text("reviewed\n")
+    result = runner.invoke(main, ["digests", "list"])
+    assert "reviewed" in result.output
+
+
+def test_digests_review_missing_exits_1(runner, patch_digests):
+    result = runner.invoke(main, ["digests", "review", "1999-01-01"])
+    assert result.exit_code == 1
+    assert "[ERROR]" in result.output
+
+
+def test_digests_show_prints_content(runner, patch_digests, tmp_path):
+    d = tmp_path / "digests"
+    d.mkdir()
+    (d / "2026-04-27.md").write_text("# Digest\n\nHello world\n")
+    result = runner.invoke(main, ["digests", "show", "2026-04-27"])
+    assert result.exit_code == 0, result.output
+    assert "Hello world" in result.output
+
+
+def test_digests_show_missing_exits_1(runner, patch_digests):
+    result = runner.invoke(main, ["digests", "show", "1999-01-01"])
+    assert result.exit_code == 1
+    assert "[ERROR]" in result.output
