@@ -27,6 +27,9 @@ def _state_path(digest_path: Path) -> Path:
     return digest_path.with_suffix(".state")
 
 
+_STATUS_COLORS = {"reviewed": "green", "discarded": "red", "pending": "yellow"}
+
+
 def _source_count(path: Path) -> int:
     """Count bullet lines under ## Sources in the digest file."""
     try:
@@ -54,7 +57,8 @@ def list_digests() -> list[DigestInfo]:
     infos = []
     for p in sorted(d.glob("*.md"), reverse=True):
         state_file = _state_path(p)
-        status = "reviewed" if (state_file.exists() and state_file.read_text().strip() == "reviewed") else "pending"
+        raw_state = state_file.read_text().strip() if state_file.exists() else ""
+        status = raw_state if raw_state in {"reviewed", "discarded"} else "pending"
         infos.append(DigestInfo(
             id=p.stem,
             path=p,
@@ -83,15 +87,21 @@ def save(output: str, items: list) -> Path:
     return candidate
 
 
-def mark_reviewed(digest_id: str) -> Path | None:
-    """Write a .state file marking the digest as reviewed. Returns path or None if not found."""
+def _mark_state(digest_id: str, state: str) -> Path | None:
     d = _dir()
     candidate = d / f"{digest_id}.md"
     if not candidate.exists():
         return None
-    state = _state_path(candidate)
-    state.write_text("reviewed\n", encoding="utf-8")
+    _state_path(candidate).write_text(f"{state}\n", encoding="utf-8")
     return candidate
+
+
+def mark_reviewed(digest_id: str) -> Path | None:
+    return _mark_state(digest_id, "reviewed")
+
+
+def mark_discarded(digest_id: str) -> Path | None:
+    return _mark_state(digest_id, "discarded")
 
 
 @click.group(name="digests")
@@ -107,7 +117,8 @@ def list_cmd():
         click.echo("No digests saved yet.")
         return
     for d in infos:
-        status_tag = click.style("reviewed", fg="green") if d.status == "reviewed" else click.style("pending", fg="yellow")
+        color = _STATUS_COLORS.get(d.status, "white")
+        status_tag = click.style(d.status, fg=color)
         click.echo(f"  {d.id}  [{status_tag}]  {d.source_count} source(s)")
 
 
@@ -131,3 +142,14 @@ def review_cmd(digest_id: str):
         click.echo(f"[ERROR] No digest found: {digest_id}", err=True)
         raise SystemExit(1)
     click.echo(f"[DIGEST] marked reviewed → {digest_id}")
+
+
+@digests_group.command("discard")
+@click.argument("digest_id")
+def discard_cmd(digest_id: str):
+    """Mark a digest as discarded (not worth keeping)."""
+    result = mark_discarded(digest_id)
+    if result is None:
+        click.echo(f"[ERROR] No digest found: {digest_id}", err=True)
+        raise SystemExit(1)
+    click.echo(f"[DIGEST] marked discarded → {digest_id}")

@@ -375,26 +375,48 @@ def inbox_cmd():
     """List items currently in the inbox."""
     from textread import inbox as inbox_mod
 
-    entries = inbox_mod.list_entries()
-    if not entries:
+    processing = inbox_mod.list_processing()
+    pending = inbox_mod.list_entries()
+
+    if not processing and not pending:
         click.echo("Inbox is empty.")
         return
-    for i, e in enumerate(entries, 1):
-        click.echo(f"  {i:2}. [{e.type:3}] {e.source}  ({e.added_at})")
-    click.echo(f"\n{len(entries)} item(s) pending digest.")
+
+    if processing:
+        info = inbox_mod.lock_info()
+        label = f"pid {info[0]}, started {info[1]}" if info else "stale"
+        click.echo(f"  [LOCKED — digest in progress: {label}]")
+        for e in processing:
+            click.echo(f"    [{e.type:3}] {e.source}")
+
+    if pending:
+        if processing:
+            click.echo()
+        for i, e in enumerate(pending, 1):
+            click.echo(f"  {i:2}. [{e.type:3}] {e.source}  ({e.added_at})")
+        click.echo(f"\n{len(pending)} item(s) pending digest.")
 
 
 @main.command(name="digest")
 @click.option("--model", default=None, help="Model alias (haiku/sonnet/opus) or raw model ID.")
 @click.option("--via-cli", "via_cli", is_flag=True, default=False, help="Use claude CLI backend.")
 @click.option("--profile", default=None, help="textaccounts profile for claude -p calls.")
-@click.option("--clear", "do_clear", is_flag=True, default=False, help="Clear inbox after a successful digest.")
+@click.option("--clear", "do_clear", is_flag=True, default=False, help="Clear digested items after a successful digest.")
 def digest_cmd(model, via_cli, profile, do_clear):
-    """Synthesize all inbox items — summary, themes, and brainstorm."""
+    """Synthesize all pending inbox items — summary, themes, and brainstorm."""
     from textread import inbox as inbox_mod
 
-    entries = inbox_mod.list_entries()
-    if not entries:
+    if inbox_mod.lock_info() is not None:
+        click.echo("[ERROR] Another digest is already running.", err=True)
+        sys.exit(1)
+
+    try:
+        locked_entries = inbox_mod.start_digest()
+    except RuntimeError as e:
+        click.echo(f"[ERROR] {e}", err=True)
+        sys.exit(1)
+
+    if not locked_entries:
         click.echo("Inbox is empty — nothing to digest.")
         return
 
@@ -404,7 +426,7 @@ def digest_cmd(model, via_cli, profile, do_clear):
     profile = profile or cfg.default_profile
 
     items = []
-    for e in entries:
+    for e in locked_entries:
         try:
             text = cache.get_markdown(e.cache_key, cfg)
         except cache.CacheError:
@@ -413,12 +435,14 @@ def digest_cmd(model, via_cli, profile, do_clear):
         items.append((e, text))
 
     if not items:
+        inbox_mod.finish_digest(clear=False)
         click.echo("[ERROR] No cached content found for any inbox item.", err=True)
         sys.exit(1)
 
     try:
         output = agent.digest(items, model, backend, profile)
     except agent.AgentError as e:
+        inbox_mod.finish_digest(clear=False)
         click.echo(f"[ERROR] {e}", err=True)
         sys.exit(1)
 
@@ -427,9 +451,9 @@ def digest_cmd(model, via_cli, profile, do_clear):
     digest_path = digests.save(output, items)
     click.echo(f"\n[DIGEST] saved → {digest_path}", err=True)
 
+    inbox_mod.finish_digest(clear=do_clear)
     if do_clear:
-        inbox_mod.clear()
-        click.echo(f"[INBOX] cleared — {len(entries)} item(s) removed.", err=True)
+        click.echo(f"[INBOX] {len(locked_entries)} item(s) cleared.", err=True)
 
 
 main.add_command(context_group, "context")

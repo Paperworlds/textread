@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0
+
+- Per-item locking during digest: items being processed move to `inbox.processing.jsonl`; `add` is always open and never blocked
+- `textread inbox` shows locked items separately with pid and start time
+- `textread digest` acquires the lock at start, releases on finish or error; a second concurrent digest is rejected
+- Stale lock auto-recovery: if the digest process dies, the lock is removed and items restored on next `inbox` or `add` call
+- `textread digests discard <id>` — mark a digest as discarded (shown in red in `digests list`)
+
 ## v0.1.9
 
 - `textread digests list` — list all saved digests with `pending` / `reviewed` status and source count

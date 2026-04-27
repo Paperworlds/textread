@@ -678,9 +678,11 @@ def test_read_routes_pdf_url(runner, monkeypatch):
 
 @pytest.fixture()
 def patch_inbox(monkeypatch, tmp_path):
-    """Redirect inbox to a tmp file so tests don't touch ~/.local/state."""
+    """Redirect inbox to tmp files so tests don't touch ~/.local/state."""
     import textread.inbox as inbox_mod
     monkeypatch.setattr(inbox_mod, "INBOX_PATH", tmp_path / "inbox.jsonl")
+    monkeypatch.setattr(inbox_mod, "PROCESSING_PATH", tmp_path / "inbox.processing.jsonl")
+    monkeypatch.setattr(inbox_mod, "LOCK_PATH", tmp_path / "inbox.lock")
     return inbox_mod
 
 
@@ -910,3 +912,22 @@ def test_digests_show_missing_exits_1(runner, patch_digests):
     result = runner.invoke(main, ["digests", "show", "1999-01-01"])
     assert result.exit_code == 1
     assert "[ERROR]" in result.output
+
+
+def test_digests_discard(runner, patch_digests, tmp_path):
+    d = tmp_path / "digests"
+    d.mkdir()
+    (d / "2026-04-27.md").write_text("# Digest\n\n## Sources\n\n- [pdf] a.pdf\n")
+    result = runner.invoke(main, ["digests", "discard", "2026-04-27"])
+    assert result.exit_code == 0, result.output
+    assert "discarded" in result.output
+    assert (d / "2026-04-27.state").read_text().strip() == "discarded"
+
+
+def test_digests_discard_shows_in_list(runner, patch_digests, tmp_path):
+    d = tmp_path / "digests"
+    d.mkdir()
+    (d / "2026-04-27.md").write_text("# Digest\n\n## Sources\n\n- [pdf] a.pdf\n")
+    (d / "2026-04-27.state").write_text("discarded\n")
+    result = runner.invoke(main, ["digests", "list"])
+    assert "discarded" in result.output
