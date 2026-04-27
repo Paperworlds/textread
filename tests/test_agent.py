@@ -159,7 +159,7 @@ def test_r01_cli_backend_calls_subprocess(monkeypatch):
 
     assert isinstance(result, Mapping)
     assert result.verdict == "worth_reading"
-    assert "--system" in called_args
+    assert "--system-prompt" in called_args
 
 
 def test_r02_cli_backend_no_binary(monkeypatch):

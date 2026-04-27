@@ -147,7 +147,7 @@ def _evaluate_cli(
     env = {**os.environ, **(profile_env or {})}
 
     result = subprocess.run(
-        ["claude", "-p", user_msg, "--system", system,
+        ["claude", "-p", user_msg, "--system-prompt", system,
          "--model", model_id, "--output-format", "text"],
         capture_output=True,
         text=True,
@@ -193,7 +193,7 @@ def _digest_cli(system: str, user_msg: str, model_id: str, profile_env: dict) ->
         raise AgentError("claude binary not found — install Claude Code or use --no-agent")
     env = {**os.environ, **(profile_env or {})}
     result = subprocess.run(
-        ["claude", "-p", _sanitize(user_msg), "--system", _sanitize(system),
+        ["claude", "-p", _sanitize(user_msg), "--system-prompt", _sanitize(system),
          "--model", model_id, "--output-format", "text"],
         capture_output=True,
         text=True,
