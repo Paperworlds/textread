@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.8
+
+- `textread digest` auto-saves output to `~/.local/state/paperworlds/textread/digests/YYYY-MM-DD.md`
+- Saved file includes a `## Sources` header listing which items were digested
+- Collision-safe naming: second digest of the day gets `YYYY-MM-DD-2.md` etc.
+
 ## v0.1.7
 
 - `textread add <source>` — fetch/cache a URL, PDF, or local `.md` file and append it to the inbox

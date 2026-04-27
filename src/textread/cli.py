@@ -383,6 +383,27 @@ def inbox_cmd():
     click.echo(f"\n{len(entries)} item(s) pending digest.")
 
 
+_DIGESTS_DIR = Path("~/.local/state/paperworlds/textread/digests")
+
+
+def _save_digest(output: str, items: list) -> Path:
+    """Write digest markdown to the digests dir and return the path."""
+    base_dir = _DIGESTS_DIR.expanduser()
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    candidate = base_dir / f"{date_str}.md"
+    counter = 2
+    while candidate.exists():
+        candidate = base_dir / f"{date_str}-{counter}.md"
+        counter += 1
+
+    sources_block = "\n".join(f"- [{e.type}] {e.source}" for e, _ in items)
+    full_content = f"# Digest — {date_str}\n\n## Sources\n\n{sources_block}\n\n---\n\n{output}\n"
+    candidate.write_text(full_content, encoding="utf-8")
+    return candidate
+
+
 @main.command(name="digest")
 @click.option("--model", default=None, help="Model alias (haiku/sonnet/opus) or raw model ID.")
 @click.option("--via-cli", "via_cli", is_flag=True, default=False, help="Use claude CLI backend.")
@@ -423,9 +444,12 @@ def digest_cmd(model, via_cli, profile, do_clear):
 
     click.echo(output)
 
+    digest_path = _save_digest(output, items)
+    click.echo(f"\n[DIGEST] saved → {digest_path}", err=True)
+
     if do_clear:
         inbox_mod.clear()
-        click.echo(f"\n[INBOX] cleared — {len(entries)} item(s) removed.", err=True)
+        click.echo(f"[INBOX] cleared — {len(entries)} item(s) removed.", err=True)
 
 
 main.add_command(context_group, "context")

@@ -790,11 +790,11 @@ def test_digest_empty_inbox(runner, patch_inbox):
     assert "Inbox is empty" in result.output
 
 
-def test_digest_calls_agent_and_prints(runner, monkeypatch, patch_inbox):
-    """`textread digest` collects cached content and calls agent.digest."""
+def test_digest_calls_agent_and_prints(runner, monkeypatch, tmp_path, patch_inbox):
+    """`textread digest` collects cached content, calls agent.digest, saves file."""
     import textread.cli as cli_mod
-    import textread.inbox as inbox_mod
 
+    monkeypatch.setattr(cli_mod, "_DIGESTS_DIR", tmp_path / "digests")
     patch_inbox.add("https://a.com", "url", "A", "https://a.com")
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda key, cfg: "content of a")
     monkeypatch.setattr(cli_mod.agent, "digest",
@@ -803,12 +803,17 @@ def test_digest_calls_agent_and_prints(runner, monkeypatch, patch_inbox):
     result = runner.invoke(main, ["digest"])
     assert result.exit_code == 0, result.output
     assert "## Item Summaries" in result.output
+    assert "[DIGEST] saved" in result.output
+    saved = list((tmp_path / "digests").glob("*.md"))
+    assert len(saved) == 1
+    assert "## Sources" in saved[0].read_text()
 
 
-def test_digest_clear_flag_removes_inbox(runner, monkeypatch, patch_inbox):
+def test_digest_clear_flag_removes_inbox(runner, monkeypatch, tmp_path, patch_inbox):
     """`textread digest --clear` clears the inbox after digest."""
     import textread.cli as cli_mod
 
+    monkeypatch.setattr(cli_mod, "_DIGESTS_DIR", tmp_path / "digests")
     patch_inbox.add("https://a.com", "url", "A", "https://a.com")
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda key, cfg: "text")
     monkeypatch.setattr(cli_mod.agent, "digest",
@@ -819,11 +824,12 @@ def test_digest_clear_flag_removes_inbox(runner, monkeypatch, patch_inbox):
     assert patch_inbox.list_entries() == []
 
 
-def test_digest_skips_missing_cache(runner, monkeypatch, patch_inbox):
+def test_digest_skips_missing_cache(runner, monkeypatch, tmp_path, patch_inbox):
     """`textread digest` warns and skips entries with no cached content."""
     import textread.cli as cli_mod
     from textread.cache import CacheError
 
+    monkeypatch.setattr(cli_mod, "_DIGESTS_DIR", tmp_path / "digests")
     patch_inbox.add("https://a.com", "url", "A", "https://a.com")
     monkeypatch.setattr(cli_mod.cache, "get_markdown",
                         lambda key, cfg: (_ for _ in ()).throw(CacheError("missing")))
