@@ -670,3 +670,164 @@ def test_read_routes_pdf_url(runner, monkeypatch):
     result = runner.invoke(main, ["read", PDF_URL])
     assert result.exit_code == 0, result.output
     assert "[READ] pdf →" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 013 — add command
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def patch_inbox(monkeypatch, tmp_path):
+    """Redirect inbox to a tmp file so tests don't touch ~/.local/state."""
+    import textread.inbox as inbox_mod
+    monkeypatch.setattr(inbox_mod, "INBOX_PATH", tmp_path / "inbox.jsonl")
+    return inbox_mod
+
+
+def test_add_url(runner, monkeypatch, patch_inbox):
+    """`textread add <url>` fetches, caches, and appends to inbox."""
+    import textread.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, cache=None, refresh=False: object())
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
+
+    result = runner.invoke(main, ["add", URL])
+    assert result.exit_code == 0, result.output
+    assert "[INBOX] added (url)" in result.output
+    assert len(patch_inbox.list_entries()) == 1
+    assert patch_inbox.list_entries()[0].type == "url"
+
+
+def test_add_pdf(runner, monkeypatch, tmp_path, patch_inbox):
+    """`textread add <file.pdf>` extracts, caches, and appends to inbox."""
+    import textread.cli as cli_mod
+    from textread.fetch import FetchResult
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF fake")
+    fake = FetchResult(url=pdf.as_uri(), final_url=pdf.as_uri(),
+                       text="# Content", content_type="application/pdf",
+                       fetched_at="2026-01-01T00:00:00Z")
+    monkeypatch.setattr(cli_mod.fetch, "fetch_pdf", lambda source, pages=None, backend="native": fake)
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
+
+    result = runner.invoke(main, ["add", str(pdf)])
+    assert result.exit_code == 0, result.output
+    assert "[INBOX] added (pdf)" in result.output
+    assert patch_inbox.list_entries()[0].type == "pdf"
+
+
+def test_add_md(runner, monkeypatch, tmp_path, patch_inbox):
+    """`textread add <file.md>` reads, caches, and appends to inbox."""
+    import textread.cli as cli_mod
+
+    md = tmp_path / "notes.md"
+    md.write_text("# Hello\nSome content.", encoding="utf-8")
+    cached = []
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
+    monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: cached.append(result))
+
+    result = runner.invoke(main, ["add", str(md)])
+    assert result.exit_code == 0, result.output
+    assert "[INBOX] added (md)" in result.output
+    e = patch_inbox.list_entries()[0]
+    assert e.type == "md"
+    assert e.title == "notes"
+    assert cached[0].content_type == "text/markdown"
+
+
+def test_add_md_missing_file_exits_1(runner, monkeypatch, patch_inbox):
+    """`textread add` with a non-existent .md file exits 1."""
+    result = runner.invoke(main, ["add", "/nonexistent/file.md"])
+    assert result.exit_code == 1
+    assert "[ERROR]" in result.output
+
+
+def test_add_skips_cache_if_already_cached(runner, monkeypatch, tmp_path, patch_inbox):
+    """`textread add` skips fetch_pdf if cache entry already exists."""
+    import textread.cli as cli_mod
+
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF fake")
+    fetch_called = []
+    monkeypatch.setattr(cli_mod.fetch, "fetch_pdf", lambda *a, **kw: fetch_called.append(True))
+    monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: True)
+
+    result = runner.invoke(main, ["add", str(pdf)])
+    assert result.exit_code == 0, result.output
+    assert fetch_called == []
+
+
+# ---------------------------------------------------------------------------
+# 013 — inbox command
+# ---------------------------------------------------------------------------
+
+def test_inbox_empty(runner, patch_inbox):
+    result = runner.invoke(main, ["inbox"])
+    assert result.exit_code == 0, result.output
+    assert "Inbox is empty" in result.output
+
+
+def test_inbox_lists_entries(runner, patch_inbox):
+    patch_inbox.add("https://a.com", "url", "A", "https://a.com")
+    patch_inbox.add("/doc.pdf", "pdf", "doc", "file:///doc.pdf")
+    result = runner.invoke(main, ["inbox"])
+    assert result.exit_code == 0, result.output
+    assert "url" in result.output
+    assert "pdf" in result.output
+    assert "2 item(s) pending digest" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 013 — digest command
+# ---------------------------------------------------------------------------
+
+def test_digest_empty_inbox(runner, patch_inbox):
+    result = runner.invoke(main, ["digest"])
+    assert result.exit_code == 0, result.output
+    assert "Inbox is empty" in result.output
+
+
+def test_digest_calls_agent_and_prints(runner, monkeypatch, patch_inbox):
+    """`textread digest` collects cached content and calls agent.digest."""
+    import textread.cli as cli_mod
+    import textread.inbox as inbox_mod
+
+    patch_inbox.add("https://a.com", "url", "A", "https://a.com")
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda key, cfg: "content of a")
+    monkeypatch.setattr(cli_mod.agent, "digest",
+                        lambda items, model, backend, profile: "## Item Summaries\nFoo")
+
+    result = runner.invoke(main, ["digest"])
+    assert result.exit_code == 0, result.output
+    assert "## Item Summaries" in result.output
+
+
+def test_digest_clear_flag_removes_inbox(runner, monkeypatch, patch_inbox):
+    """`textread digest --clear` clears the inbox after digest."""
+    import textread.cli as cli_mod
+
+    patch_inbox.add("https://a.com", "url", "A", "https://a.com")
+    monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda key, cfg: "text")
+    monkeypatch.setattr(cli_mod.agent, "digest",
+                        lambda items, model, backend, profile: "## Done")
+
+    result = runner.invoke(main, ["digest", "--clear"])
+    assert result.exit_code == 0, result.output
+    assert patch_inbox.list_entries() == []
+
+
+def test_digest_skips_missing_cache(runner, monkeypatch, patch_inbox):
+    """`textread digest` warns and skips entries with no cached content."""
+    import textread.cli as cli_mod
+    from textread.cache import CacheError
+
+    patch_inbox.add("https://a.com", "url", "A", "https://a.com")
+    monkeypatch.setattr(cli_mod.cache, "get_markdown",
+                        lambda key, cfg: (_ for _ in ()).throw(CacheError("missing")))
+
+    result = runner.invoke(main, ["digest"])
+    assert result.exit_code == 1
+    assert "[WARN]" in result.output or "No cached content" in result.output

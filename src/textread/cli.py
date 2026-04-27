@@ -4,6 +4,7 @@ from __future__ import annotations
 import dataclasses
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -59,6 +60,13 @@ class _CacheProxy:
 
     def exists(self, url: str) -> bool:
         return cache.exists(url, self._cfg)
+
+
+def _is_md(source: str) -> bool:
+    """Return True if source is a local markdown file."""
+    if source.startswith(("http://", "https://")):
+        return False
+    return Path(source).suffix.lower() in {".md", ".markdown"}
 
 
 def _is_pdf(source: str) -> bool:
@@ -299,6 +307,125 @@ def install_cmd(shell: str | None):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(result.stdout)
     click.echo(f"Completions written to {target}")
+
+
+@main.command(name="add")
+@click.argument("source")
+def add_cmd(source: str):
+    """Fetch/cache a source (URL, PDF, or .md file) and add it to the inbox."""
+    from textread import inbox as inbox_mod
+
+    cfg = load_config()
+
+    if _is_md(source):
+        local = Path(source).expanduser().resolve()
+        if not local.exists():
+            click.echo(f"[ERROR] File not found: {source}", err=True)
+            sys.exit(1)
+        cache_key = local.as_uri()
+        if not cache.exists(cache_key, cfg):
+            result = fetch.FetchResult(
+                url=cache_key,
+                final_url=cache_key,
+                text=local.read_text(encoding="utf-8"),
+                content_type="text/markdown",
+                fetched_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            cache.put(cache_key, result, cfg)
+        title = local.stem
+        type_ = "md"
+
+    elif _is_pdf(source):
+        if source.startswith(("http://", "https://")):
+            cache_key = source
+        else:
+            cache_key = Path(source).expanduser().resolve().as_uri()
+        if not cache.exists(cache_key, cfg):
+            try:
+                result = fetch.fetch_pdf(source)
+            except FetchError as e:
+                click.echo(f"[ERROR] {e}", err=True)
+                sys.exit(1)
+            cache.put(cache_key, result, cfg)
+        title = Path(source.split("?")[0]).stem
+        type_ = "pdf"
+
+    else:
+        cache_key = source
+        try:
+            result = fetch.pull(source, cache=_CacheProxy(cfg))
+        except FetchBlocked as e:
+            click.echo(f"[WARN] Blocked by robots.txt: {e}", err=True)
+            sys.exit(1)
+        except FetchError as e:
+            click.echo(f"[ERROR] Fetch failed: {e}", err=True)
+            sys.exit(1)
+        if result is not None:
+            cache.put(source, result, cfg)
+        title = source
+        type_ = "url"
+
+    inbox_mod.add(source, type_, title, cache_key)
+    click.echo(f"[INBOX] added ({type_}) → {source}")
+
+
+@main.command(name="inbox")
+def inbox_cmd():
+    """List items currently in the inbox."""
+    from textread import inbox as inbox_mod
+
+    entries = inbox_mod.list_entries()
+    if not entries:
+        click.echo("Inbox is empty.")
+        return
+    for i, e in enumerate(entries, 1):
+        click.echo(f"  {i:2}. [{e.type:3}] {e.source}  ({e.added_at})")
+    click.echo(f"\n{len(entries)} item(s) pending digest.")
+
+
+@main.command(name="digest")
+@click.option("--model", default=None, help="Model alias (haiku/sonnet/opus) or raw model ID.")
+@click.option("--via-cli", "via_cli", is_flag=True, default=False, help="Use claude CLI backend.")
+@click.option("--profile", default=None, help="textaccounts profile for claude -p calls.")
+@click.option("--clear", "do_clear", is_flag=True, default=False, help="Clear inbox after a successful digest.")
+def digest_cmd(model, via_cli, profile, do_clear):
+    """Synthesize all inbox items — summary, themes, and brainstorm."""
+    from textread import inbox as inbox_mod
+
+    entries = inbox_mod.list_entries()
+    if not entries:
+        click.echo("Inbox is empty — nothing to digest.")
+        return
+
+    cfg = load_config()
+    model = model or cfg.default_model
+    backend = "cli" if via_cli else cfg.agent_backend
+    profile = profile or cfg.default_profile
+
+    items = []
+    for e in entries:
+        try:
+            text = cache.get_markdown(e.cache_key, cfg)
+        except cache.CacheError:
+            click.echo(f"[WARN] No cache for {e.source} — skipping", err=True)
+            continue
+        items.append((e, text))
+
+    if not items:
+        click.echo("[ERROR] No cached content found for any inbox item.", err=True)
+        sys.exit(1)
+
+    try:
+        output = agent.digest(items, model, backend, profile)
+    except agent.AgentError as e:
+        click.echo(f"[ERROR] {e}", err=True)
+        sys.exit(1)
+
+    click.echo(output)
+
+    if do_clear:
+        inbox_mod.clear()
+        click.echo(f"\n[INBOX] cleared — {len(entries)} item(s) removed.", err=True)
 
 
 main.add_command(context_group, "context")

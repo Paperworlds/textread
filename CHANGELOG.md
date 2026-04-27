@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.7
+
+- `textread add <source>` — fetch/cache a URL, PDF, or local `.md` file and append it to the inbox
+- `textread inbox` — list items currently pending digest
+- `textread digest` — synthesize all inbox items via Claude: per-item summaries, themes & connections, brainstorm; `--clear` flushes inbox after
+- Inbox stored at `~/.local/state/paperworlds/textread/inbox.jsonl` (one JSON entry per line)
+
 ## v0.1.6
 
 - ci: install `libxml2-dev` and `libxslt1-dev` before `uv sync` — `lxml==5.4.0` (required transitively by `readability-lxml`) had no prebuilt wheel for Python 3.14 on Linux and was failing source-build on the runner

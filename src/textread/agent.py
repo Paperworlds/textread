@@ -160,6 +160,89 @@ def _evaluate_cli(
     return _parse_mapping(result.stdout.strip())
 
 
+_DIGEST_SYSTEM = """\
+You are a research synthesis assistant.
+The user has collected several items during the day and wants to discuss them.
+
+Your output must be markdown with exactly these three sections:
+
+## Item Summaries
+For each item, write a 2-3 sentence summary — what it is and why it matters.
+
+## Themes & Connections
+Identify 2-4 recurring themes or surprising connections across the items.
+
+## Brainstorm
+List 4-6 concrete questions or ideas the user could explore next, sparked by what they collected.
+"""
+
+
+def _digest_sdk(system: str, user_msg: str, model_id: str) -> str:
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=model_id,
+        max_tokens=4096,
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    return response.content[0].text
+
+
+def _digest_cli(system: str, user_msg: str, model_id: str, profile_env: dict) -> str:
+    if shutil.which("claude") is None:
+        raise AgentError("claude binary not found — install Claude Code or use --no-agent")
+    env = {**os.environ, **(profile_env or {})}
+    result = subprocess.run(
+        ["claude", "-p", _sanitize(user_msg), "--system", _sanitize(system),
+         "--model", model_id, "--output-format", "text"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=env,
+    )
+    if result.returncode != 0:
+        raise AgentError(result.stderr.strip() or "claude -p exited non-zero")
+    return result.stdout.strip()
+
+
+def digest(
+    items: list[tuple],
+    model: str = "haiku",
+    backend: str = "sdk",
+    profile: str | None = None,
+) -> str:
+    """Synthesize inbox items into a research digest (markdown string).
+
+    Args:
+        items: List of (InboxEntry, text_content) pairs.
+        model: Model alias or raw ID.
+        backend: "sdk" or "cli".
+        profile: textaccounts profile for CLI backend.
+
+    Returns:
+        Markdown string with Item Summaries, Themes & Connections, Brainstorm.
+    """
+    model_id = MODEL_ALIASES.get(model, model)
+    chars_per_item = max(4000, MAX_CONTENT_CHARS // len(items))
+
+    parts: list[str] = []
+    for entry, text in items:
+        truncated = text[:chars_per_item]
+        parts.append(f"### [{entry.type.upper()}] {entry.source}\n\n{truncated}")
+
+    user_msg = (
+        f"Here are {len(items)} item(s) I collected today:\n\n---\n\n"
+        + "\n\n---\n\n".join(parts)
+    )
+
+    if backend == "cli":
+        profile_env = _resolve_profile_env(profile)
+        return _digest_cli(_DIGEST_SYSTEM, user_msg, model_id, profile_env)
+    if profile is not None:
+        print("[WARN] --profile has no effect with sdk backend", file=sys.stderr)
+    return _digest_sdk(_DIGEST_SYSTEM, user_msg, model_id)
+
+
 def evaluate(
     url: str,
     raw: str,
