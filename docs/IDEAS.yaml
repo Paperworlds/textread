@@ -4,6 +4,31 @@
 
 ideas:
 
+  multi_model_pipeline:
+    status: idea
+    priority: low
+    title: Hybrid multi-model digest pipeline
+    source: textread digest 2026-04-27-2, brainstorm item 5 (claude_usage_limits_reddit.pdf)
+    summary: |
+      Route per-item summarisation during digest to a cheaper/free model
+      (e.g. Gemini Flash — free tier, 1M context) and only call Claude for
+      the cross-cutting synthesis: themes, connections, brainstorm.
+      That's where Claude earns its keep. Per-document reading is mechanical
+      extraction that Gemini handles well.
+    implementation_sketch: |
+      In agent.digest(): split into two phases.
+      Phase 1: summarise each item independently → Gemini Flash via google-generativeai SDK.
+      Phase 2: feed condensed summaries to Claude → themes + brainstorm only.
+      Add config key: digest_router: claude | gemini+claude
+    config_sketch: |
+      digest_router: gemini+claude   # claude | gemini+claude
+      gemini_model: gemini-1.5-flash
+    tradeoff: |
+      Gemini summaries are shallower — good for factual extraction, weaker on nuanced
+      interpretation. Validate per-item quality before trusting fully.
+      Also adds a second SDK dependency and API key requirement.
+    trigger: When digest token costs or session limits become a practical problem.
+
   browser_fetch_backend:
     status: idea
     title: Browser fetch backend via browser-harness
