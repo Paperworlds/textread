@@ -40,6 +40,17 @@ def fetch_items(token: str, collection_id: int) -> list[dict]:
     return items
 
 
+def move_item(token: str, item_id: int, collection_id: int = -1) -> None:
+    """Move a raindrop to another collection (default: Unsorted, id=-1)."""
+    r = httpx.put(
+        f"{_BASE}/raindrop/{item_id}",
+        headers=_headers(token),
+        json={"collection": {"$id": collection_id}},
+        timeout=10,
+    )
+    r.raise_for_status()
+
+
 def delete_item(token: str, item_id: int) -> None:
     """Permanently delete a raindrop by ID."""
     r = httpx.delete(f"{_BASE}/raindrop/{item_id}", headers=_headers(token), timeout=10)

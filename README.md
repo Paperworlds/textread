@@ -123,7 +123,7 @@ Save links from your browser or phone to a Raindrop collection; `textread pull` 
    ```
 4. Install the [browser extension](https://raindrop.io/download) or [Android app](https://play.google.com/store/apps/details?id=io.raindrop.raindropio)
 5. Save URLs to the `textread` collection throughout the day
-6. Run `textread pull` — each item is fetched, cached, queued in the inbox, and removed from Raindrop
+6. Run `textread pull` — each item is fetched, cached, queued in the inbox, and moved to your Raindrop Unsorted collection (use `--delete` to permanently remove instead)
 
 ## Roadmap
 

@@ -457,8 +457,10 @@ def digest_cmd(model, via_cli, profile, do_clear):
 
 
 @main.command(name="pull")
-def pull_cmd():
-    """Pull bookmarks from Raindrop.io into the inbox, then delete them from Raindrop."""
+@click.option("--delete", "do_delete", is_flag=True, default=False,
+              help="Permanently delete items from Raindrop instead of moving them to Unsorted.")
+def pull_cmd(do_delete: bool):
+    """Pull bookmarks from Raindrop.io into the inbox, then move them to Unsorted."""
     from textread import inbox as inbox_mod, raindrop
 
     cfg = load_config()
@@ -505,9 +507,13 @@ def pull_cmd():
             continue
         inbox_mod.add(url, "url", title, url)
         try:
-            raindrop.delete_item(cfg.raindrop_token, item_id)
+            if do_delete:
+                raindrop.delete_item(cfg.raindrop_token, item_id)
+            else:
+                raindrop.move_item(cfg.raindrop_token, item_id)
         except Exception as e:
-            click.echo(f"[WARN] Could not delete Raindrop item {item_id}: {e}", err=True)
+            action = "delete" if do_delete else "move"
+            click.echo(f"[WARN] Could not {action} Raindrop item {item_id}: {e}", err=True)
         click.echo(f"[PULL] {title}")
         added += 1
 

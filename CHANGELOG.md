@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.2
+
+- `textread pull` now moves processed items to Raindrop Unsorted instead of deleting them
+- `textread pull --delete` flag for permanent deletion
+
 ## v0.2.1
 
 - `textread pull` — drain a Raindrop.io collection into the inbox: fetches each URL, caches it, adds to inbox, deletes from Raindrop
