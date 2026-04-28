@@ -420,40 +420,41 @@ def digest_cmd(model, via_cli, profile, do_clear):
         click.echo("Inbox is empty — nothing to digest.")
         return
 
-    cfg = load_config()
-    model = model or cfg.default_model
-    backend = "cli" if via_cli else cfg.agent_backend
-    profile = profile or cfg.default_profile
-
-    items = []
-    for e in locked_entries:
-        try:
-            text = cache.get_markdown(e.cache_key, cfg)
-        except cache.CacheError:
-            click.echo(f"[WARN] No cache for {e.source} — skipping", err=True)
-            continue
-        items.append((e, text))
-
-    if not items:
-        inbox_mod.finish_digest(clear=False)
-        click.echo("[ERROR] No cached content found for any inbox item.", err=True)
-        sys.exit(1)
-
+    succeeded = False
     try:
-        output = agent.digest(items, model, backend, profile)
-    except agent.AgentError as e:
-        inbox_mod.finish_digest(clear=False)
-        click.echo(f"[ERROR] {e}", err=True)
-        sys.exit(1)
+        cfg = load_config()
+        model = model or cfg.default_model
+        backend = "cli" if via_cli else cfg.agent_backend
+        profile = profile or cfg.default_profile
 
-    click.echo(output)
+        items = []
+        for e in locked_entries:
+            try:
+                text = cache.get_markdown(e.cache_key, cfg)
+            except cache.CacheError:
+                click.echo(f"[WARN] No cache for {e.source} — skipping", err=True)
+                continue
+            items.append((e, text))
 
-    digest_path = digests.save(output, items)
-    click.echo(f"\n[DIGEST] saved → {digest_path}", err=True)
+        if not items:
+            click.echo("[ERROR] No cached content found for any inbox item.", err=True)
+            sys.exit(1)
 
-    inbox_mod.finish_digest(clear=do_clear)
-    if do_clear:
-        click.echo(f"[INBOX] {len(locked_entries)} item(s) cleared.", err=True)
+        try:
+            output = agent.digest(items, model, backend, profile)
+        except agent.AgentError as e:
+            click.echo(f"[ERROR] {e}", err=True)
+            sys.exit(1)
+
+        click.echo(output)
+
+        digest_path = digests.save(output, items)
+        click.echo(f"\n[DIGEST] saved → {digest_path}", err=True)
+        succeeded = True
+    finally:
+        inbox_mod.finish_digest(clear=do_clear and succeeded)
+        if do_clear and succeeded:
+            click.echo(f"[INBOX] {len(locked_entries)} item(s) cleared.", err=True)
 
 
 @main.command(name="pull")
@@ -518,6 +519,65 @@ def pull_cmd(do_delete: bool):
         added += 1
 
     click.echo(f"\n{added} item(s) added to inbox.")
+
+
+@main.command(name="recover")
+@click.option("--since", "since", default=None,
+              help="ISO date (YYYY-MM-DD, UTC) — only restore items created on/after this date. Defaults to today.")
+def recover_cmd(since: str | None):
+    """Restore items from Raindrop Trash into the textread collection.
+
+    Useful when a digest crash stranded items: re-running pull after recover
+    will bring them back into the inbox.
+    """
+    from datetime import datetime, timezone
+    from textread import raindrop
+
+    cfg = load_config()
+    if not cfg.raindrop_token:
+        click.echo("[ERROR] raindrop_token not set in ~/.config/paperworlds/textread.yaml", err=True)
+        sys.exit(1)
+
+    if since is None:
+        since = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        # validate format
+        datetime.strptime(since, "%Y-%m-%d")
+    except ValueError:
+        click.echo(f"[ERROR] --since must be YYYY-MM-DD, got {since!r}", err=True)
+        sys.exit(1)
+
+    try:
+        col_id = raindrop.find_collection(cfg.raindrop_token, cfg.raindrop_collection)
+    except Exception as e:
+        click.echo(f"[ERROR] Raindrop API error: {e}", err=True)
+        sys.exit(1)
+    if col_id is None:
+        click.echo(f"[ERROR] Collection '{cfg.raindrop_collection}' not found in Raindrop", err=True)
+        sys.exit(1)
+
+    try:
+        trash = raindrop.fetch_items(cfg.raindrop_token, -99)
+    except Exception as e:
+        click.echo(f"[ERROR] Raindrop API error: {e}", err=True)
+        sys.exit(1)
+
+    matching = [i for i in trash if (i.get("created") or "") >= since]
+    if not matching:
+        click.echo(f"No Trash items created on/after {since}.")
+        return
+
+    restored = 0
+    for item in matching:
+        try:
+            raindrop.move_item(cfg.raindrop_token, item["_id"], col_id)
+        except Exception as e:
+            click.echo(f"[WARN] Could not restore {item.get('link', item['_id'])}: {e}", err=True)
+            continue
+        click.echo(f"[RECOVER] {item.get('title') or item.get('link')}")
+        restored += 1
+
+    click.echo(f"\n{restored} item(s) restored to '{cfg.raindrop_collection}'. Run `textread pull` to ingest.")
 
 
 main.add_command(context_group, "context")

@@ -89,8 +89,14 @@ def lock_info() -> tuple[int, str] | None:
         p.unlink(missing_ok=True)
         return None
     if not _pid_alive(pid):
-        p.unlink(missing_ok=True)
+        # Stale lock from a crashed digest — recover stranded items by
+        # prepending them back to the pending inbox before clearing the lock.
+        stranded = _read_jsonl(_processing_path())
+        if stranded:
+            remaining = _read_jsonl(_path())
+            _write_jsonl(_path(), stranded + remaining)
         _processing_path().unlink(missing_ok=True)
+        p.unlink(missing_ok=True)
         return None
     return pid, started_at
 

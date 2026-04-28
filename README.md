@@ -125,6 +125,8 @@ Save links from your browser or phone to a Raindrop collection; `textread pull` 
 5. Save URLs to the `textread` collection throughout the day
 6. Run `textread pull` — each item is fetched, cached, queued in the inbox, and moved to your Raindrop Unsorted collection (use `--delete` to permanently remove instead)
 
+If a digest crash strands items (or you want to re-ingest something already moved to Trash), `textread recover --since YYYY-MM-DD` restores all Trash items created on/after that date back into the `textread` collection. The default is today (UTC). Run `textread pull` afterward to bring them into the inbox.
+
 ## Roadmap
 
 - [ ] `marker` PDF backend for complex/scanned PDFs

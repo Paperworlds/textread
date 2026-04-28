@@ -124,3 +124,21 @@ def test_stale_lock_is_auto_removed(tmp_path, monkeypatch):
     lock_file.write_text(json.dumps({"pid": 999999999, "started_at": "2026-01-01T00:00:00Z"}))
     assert inbox.lock_info() is None
     assert not lock_file.exists()
+
+
+def test_stale_lock_recovers_stranded_processing_items():
+    """Regression: a crashed digest left items in inbox.processing.jsonl;
+    the next lock_info() call must restore them to the pending inbox,
+    not silently delete them."""
+    inbox.add("https://a.com", "url", "A", "https://a.com")
+    inbox.add("https://b.com", "url", "B", "https://b.com")
+    inbox.start_digest()
+    # Simulate a crashed process: rewrite the lock to a dead PID,
+    # leaving the processing file intact (no finish_digest called).
+    inbox.LOCK_PATH.expanduser().write_text(
+        json.dumps({"pid": 999999999, "started_at": "2026-01-01T00:00:00Z"})
+    )
+    assert inbox.lock_info() is None
+    entries = inbox.list_entries()
+    assert {e.source for e in entries} == {"https://a.com", "https://b.com"}
+    assert inbox.list_processing() == []

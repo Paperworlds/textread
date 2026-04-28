@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.3
+
+- `textread recover --since YYYY-MM-DD` — restore Raindrop Trash items back into the `textread` collection (default: today, UTC); run `textread pull` afterward to re-ingest
+- Fix: `digest` crash on non-`AgentError` exception (e.g. missing `ANTHROPIC_API_KEY`) no longer strands items — `finish_digest(clear=False)` now runs in a `finally`, restoring locked items to the inbox
+- Fix: stale-lock recovery in `inbox.lock_info()` no longer deletes orphaned `inbox.processing.jsonl` entries — they are restored to the pending inbox
+
 ## v0.2.2
 
 - `textread pull` now moves processed items to Raindrop Unsorted instead of deleting them
