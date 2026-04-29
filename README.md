@@ -120,12 +120,13 @@ Save links from your browser or phone to a Raindrop collection; `textread pull` 
    ```yaml
    raindrop_token: your-token
    raindrop_collection: textread
+   raindrop_digested_collection: digested  # auto-created on first pull
    ```
 4. Install the [browser extension](https://raindrop.io/download) or [Android app](https://play.google.com/store/apps/details?id=io.raindrop.raindropio)
 5. Save URLs to the `textread` collection throughout the day
-6. Run `textread pull` — each item is fetched, cached, queued in the inbox, and moved to your Raindrop Unsorted collection (use `--delete` to permanently remove instead)
+6. Run `textread pull` — each item is fetched, cached, queued in the inbox, and moved to your `digested` collection (auto-created if missing; use `--delete` to permanently remove instead)
 
-If a digest crash strands items (or you want to re-ingest something already moved to Trash), `textread recover --since YYYY-MM-DD` restores all Trash items created on/after that date back into the `textread` collection. The default is today (UTC). Run `textread pull` afterward to bring them into the inbox.
+If a digest crash strands items, or you want to re-ingest something already processed, `textread recover --since YYYY-MM-DD` restores items created on/after that date from both Trash and the `digested` collection back into the `textread` collection. Default is today (UTC). Run `textread pull` afterward to bring them into the inbox.
 
 ## Roadmap
 

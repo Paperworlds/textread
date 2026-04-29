@@ -20,6 +20,26 @@ def find_collection(token: str, name: str) -> int | None:
     return None
 
 
+def create_collection(token: str, name: str) -> int:
+    """Create a new collection with the given title and return its ID."""
+    r = httpx.post(
+        f"{_BASE}/collection",
+        headers=_headers(token),
+        json={"title": name, "view": "list"},
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()["item"]["_id"]
+
+
+def find_or_create_collection(token: str, name: str) -> int:
+    """Return existing collection id by name, or create one and return its id."""
+    found = find_collection(token, name)
+    if found is not None:
+        return found
+    return create_collection(token, name)
+
+
 def fetch_items(token: str, collection_id: int) -> list[dict]:
     """Return all raindrops in collection_id, handling pagination."""
     items: list[dict] = []

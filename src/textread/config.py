@@ -5,7 +5,7 @@ import yaml
 
 
 _CONFIG_PATH = Path("~/.config/paperworlds/textread.yaml")
-_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend", "default_profile", "pdf_backend", "raindrop_token", "raindrop_collection"}
+_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend", "default_profile", "pdf_backend", "raindrop_token", "raindrop_collection", "raindrop_digested_collection"}
 
 
 @dataclasses.dataclass
@@ -19,6 +19,7 @@ class TextreadConfig:
     pdf_backend: str = "native"
     raindrop_token: str | None = None
     raindrop_collection: str = "textread"
+    raindrop_digested_collection: str = "digested"
 
 
 def load() -> TextreadConfig:

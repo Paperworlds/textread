@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.0
+
+- `textread pull` now moves processed items into a dedicated `digested` Raindrop collection (auto-created if missing), instead of dropping them into Unsorted. Configurable via `raindrop_digested_collection` in `~/.config/paperworlds/textread.yaml`. `--delete` still permanently removes.
+- `textread recover --since DATE` now scans both Trash and the digested collection (deduped by item id), so already-processed items can be re-ingested without manual moves in the Raindrop UI.
+
 ## v0.2.3
 
 - `textread recover --since YYYY-MM-DD` — restore Raindrop Trash items back into the `textread` collection (default: today, UTC); run `textread pull` afterward to re-ingest

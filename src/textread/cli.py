@@ -459,9 +459,9 @@ def digest_cmd(model, via_cli, profile, do_clear):
 
 @main.command(name="pull")
 @click.option("--delete", "do_delete", is_flag=True, default=False,
-              help="Permanently delete items from Raindrop instead of moving them to Unsorted.")
+              help="Permanently delete items from Raindrop instead of moving them to the digested collection.")
 def pull_cmd(do_delete: bool):
-    """Pull bookmarks from Raindrop.io into the inbox, then move them to Unsorted."""
+    """Pull bookmarks from Raindrop.io into the inbox, then move them to the digested collection."""
     from textread import inbox as inbox_mod, raindrop
 
     cfg = load_config()
@@ -478,6 +478,16 @@ def pull_cmd(do_delete: bool):
     if col_id is None:
         click.echo(f"[ERROR] Collection '{cfg.raindrop_collection}' not found in Raindrop", err=True)
         sys.exit(1)
+
+    digested_id: int | None = None
+    if not do_delete:
+        try:
+            digested_id = raindrop.find_or_create_collection(
+                cfg.raindrop_token, cfg.raindrop_digested_collection
+            )
+        except Exception as e:
+            click.echo(f"[ERROR] Could not resolve digested collection '{cfg.raindrop_digested_collection}': {e}", err=True)
+            sys.exit(1)
 
     try:
         items = raindrop.fetch_items(cfg.raindrop_token, col_id)
@@ -511,7 +521,7 @@ def pull_cmd(do_delete: bool):
             if do_delete:
                 raindrop.delete_item(cfg.raindrop_token, item_id)
             else:
-                raindrop.move_item(cfg.raindrop_token, item_id)
+                raindrop.move_item(cfg.raindrop_token, item_id, digested_id)
         except Exception as e:
             action = "delete" if do_delete else "move"
             click.echo(f"[WARN] Could not {action} Raindrop item {item_id}: {e}", err=True)
@@ -556,15 +566,34 @@ def recover_cmd(since: str | None):
         click.echo(f"[ERROR] Collection '{cfg.raindrop_collection}' not found in Raindrop", err=True)
         sys.exit(1)
 
+    sources: list[tuple[str, list[dict]]] = []
     try:
         trash = raindrop.fetch_items(cfg.raindrop_token, -99)
+        sources.append(("Trash", trash))
     except Exception as e:
-        click.echo(f"[ERROR] Raindrop API error: {e}", err=True)
+        click.echo(f"[ERROR] Raindrop API error fetching Trash: {e}", err=True)
         sys.exit(1)
 
-    matching = [i for i in trash if (i.get("created") or "") >= since]
+    digested_id = raindrop.find_collection(cfg.raindrop_token, cfg.raindrop_digested_collection)
+    if digested_id is not None:
+        try:
+            digested = raindrop.fetch_items(cfg.raindrop_token, digested_id)
+            sources.append((cfg.raindrop_digested_collection, digested))
+        except Exception as e:
+            click.echo(f"[WARN] Could not fetch '{cfg.raindrop_digested_collection}': {e}", err=True)
+
+    seen: set[int] = set()
+    matching: list[dict] = []
+    for _, items in sources:
+        for i in items:
+            if i["_id"] in seen:
+                continue
+            if (i.get("created") or "") >= since:
+                seen.add(i["_id"])
+                matching.append(i)
+
     if not matching:
-        click.echo(f"No Trash items created on/after {since}.")
+        click.echo(f"No items created on/after {since} in Trash or '{cfg.raindrop_digested_collection}'.")
         return
 
     restored = 0
