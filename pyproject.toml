@@ -1,6 +1,6 @@
 [project]
 name = "textread"
-version = "0.3.1"
+version = "0.3.2"
 requires-python = ">=3.13"
 dependencies = [
     "anthropic>=0.25",

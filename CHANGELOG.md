@@ -11,6 +11,11 @@
 - Fix: `digest` crash on non-`AgentError` exception (e.g. missing `ANTHROPIC_API_KEY`) no longer strands items — `finish_digest(clear=False)` now runs in a `finally`, restoring locked items to the inbox
 - Fix: stale-lock recovery in `inbox.lock_info()` no longer deletes orphaned `inbox.processing.jsonl` entries — they are restored to the pending inbox
 
+## v0.3.2
+
+- `textread pull` moves unfetchable items to a `blocked` Raindrop collection instead of silently skipping them
+- `raindrop_blocked_collection` config key (default: `blocked`) — auto-created if missing
+
 ## v0.3.1
 
 - `textread pull` now routes Raindrop-hosted PDFs through the PDF pipeline instead of failing with "binary data" error

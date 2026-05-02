@@ -480,13 +480,17 @@ def pull_cmd(do_delete: bool):
         sys.exit(1)
 
     digested_id: int | None = None
+    blocked_id: int | None = None
     if not do_delete:
         try:
             digested_id = raindrop.find_or_create_collection(
                 cfg.raindrop_token, cfg.raindrop_digested_collection
             )
+            blocked_id = raindrop.find_or_create_collection(
+                cfg.raindrop_token, cfg.raindrop_blocked_collection
+            )
         except Exception as e:
-            click.echo(f"[ERROR] Could not resolve digested collection '{cfg.raindrop_digested_collection}': {e}", err=True)
+            click.echo(f"[ERROR] Could not resolve collections: {e}", err=True)
             sys.exit(1)
 
     try:
@@ -510,26 +514,37 @@ def pull_cmd(do_delete: bool):
 
         is_pdf = item_type == "document" or _is_pdf(url) or "application/pdf" in url
 
+        fetch_ok = True
         if is_pdf:
             try:
                 result = fetch.fetch_pdf(url)
                 cache.put(url, result, cfg)
             except FetchError as e:
-                click.echo(f"[WARN] PDF fetch failed: {url} — {e}", err=True)
-                continue
-            inbox_mod.add(url, "pdf", title, url)
+                click.echo(f"[BLOCKED] PDF fetch failed: {url} — {e}", err=True)
+                fetch_ok = False
+            if fetch_ok:
+                inbox_mod.add(url, "pdf", title, url)
         else:
             try:
                 result = fetch.pull(url, cache=_CacheProxy(cfg))
                 if result is not None:
                     cache.put(url, result, cfg)
             except FetchBlocked as e:
-                click.echo(f"[WARN] Blocked by robots.txt: {url} — {e}", err=True)
-                continue
+                click.echo(f"[BLOCKED] robots.txt: {url} — {e}", err=True)
+                fetch_ok = False
             except FetchError as e:
-                click.echo(f"[WARN] Fetch failed: {url} — {e}", err=True)
-                continue
-            inbox_mod.add(url, "url", title, url)
+                click.echo(f"[BLOCKED] Fetch failed: {url} — {e}", err=True)
+                fetch_ok = False
+            if fetch_ok:
+                inbox_mod.add(url, "url", title, url)
+
+        if not fetch_ok:
+            if not do_delete and blocked_id is not None:
+                try:
+                    raindrop.move_item(cfg.raindrop_token, item_id, blocked_id)
+                except Exception as e:
+                    click.echo(f"[WARN] Could not move item to blocked collection: {e}", err=True)
+            continue
         try:
             if do_delete:
                 raindrop.delete_item(cfg.raindrop_token, item_id)
