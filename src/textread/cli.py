@@ -504,19 +504,32 @@ def pull_cmd(do_delete: bool):
         url = item.get("link", "")
         title = item.get("title", "") or url
         item_id = item["_id"]
+        item_type = item.get("type", "")
         if not url:
             continue
-        try:
-            result = fetch.pull(url, cache=_CacheProxy(cfg))
-            if result is not None:
+
+        is_pdf = item_type == "document" or _is_pdf(url) or "application/pdf" in url
+
+        if is_pdf:
+            try:
+                result = fetch.fetch_pdf(url)
                 cache.put(url, result, cfg)
-        except FetchBlocked as e:
-            click.echo(f"[WARN] Blocked by robots.txt: {url} — {e}", err=True)
-            continue
-        except FetchError as e:
-            click.echo(f"[WARN] Fetch failed: {url} — {e}", err=True)
-            continue
-        inbox_mod.add(url, "url", title, url)
+            except FetchError as e:
+                click.echo(f"[WARN] PDF fetch failed: {url} — {e}", err=True)
+                continue
+            inbox_mod.add(url, "pdf", title, url)
+        else:
+            try:
+                result = fetch.pull(url, cache=_CacheProxy(cfg))
+                if result is not None:
+                    cache.put(url, result, cfg)
+            except FetchBlocked as e:
+                click.echo(f"[WARN] Blocked by robots.txt: {url} — {e}", err=True)
+                continue
+            except FetchError as e:
+                click.echo(f"[WARN] Fetch failed: {url} — {e}", err=True)
+                continue
+            inbox_mod.add(url, "url", title, url)
         try:
             if do_delete:
                 raindrop.delete_item(cfg.raindrop_token, item_id)
