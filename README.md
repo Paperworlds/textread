@@ -73,6 +73,12 @@ textread digests review 2026-04-27 # mark as reviewed
 textread digests discard 2026-04-27 # mark as discarded
 ```
 
+Tip: pipe a digest into [`leaf`](https://github.com/nicholaides/leaf) for a comfortable TUI reading experience:
+
+```bash
+cat ~/.local/state/paperworlds/textread/digests/2026-04-27.md | leaf
+```
+
 ### Other commands
 
 ```bash
