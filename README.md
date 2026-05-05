@@ -53,11 +53,14 @@ textread pull
 # See what's queued
 textread inbox
 
-# Synthesize everything — summary per item, themes, brainstorm
+# Synthesize everything and clear the inbox on success
 textread digest --model sonnet --via-cli
 
-# Clear the inbox after digesting
-textread digest --model sonnet --via-cli --clear
+# Keep inbox items after digesting (e.g. to re-digest with a different model)
+textread digest --model sonnet --via-cli --keep
+
+# Clear the inbox manually without digesting
+textread inbox-clear
 ```
 
 The digest is saved to `~/.local/state/paperworlds/textread/digests/YYYY-MM-DD.md`.

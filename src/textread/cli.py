@@ -397,12 +397,25 @@ def inbox_cmd():
         click.echo(f"\n{len(pending)} item(s) pending digest.")
 
 
+@main.command(name="inbox-clear")
+def inbox_clear_cmd():
+    """Remove all pending items from the inbox."""
+    from textread import inbox as inbox_mod
+
+    entries = inbox_mod.list_entries()
+    if not entries:
+        click.echo("Inbox is already empty.")
+        return
+    inbox_mod.clear()
+    click.echo(f"{len(entries)} item(s) removed from inbox.")
+
+
 @main.command(name="digest")
 @click.option("--model", default=None, help="Model alias (haiku/sonnet/opus) or raw model ID.")
 @click.option("--via-cli", "via_cli", is_flag=True, default=False, help="Use claude CLI backend.")
 @click.option("--profile", default=None, help="textaccounts profile for claude -p calls.")
-@click.option("--clear", "do_clear", is_flag=True, default=False, help="Clear digested items after a successful digest.")
-def digest_cmd(model, via_cli, profile, do_clear):
+@click.option("--keep", "do_keep", is_flag=True, default=False, help="Keep inbox items after a successful digest (default: clear them).")
+def digest_cmd(model, via_cli, profile, do_keep):
     """Synthesize all pending inbox items — summary, themes, and brainstorm."""
     from textread import inbox as inbox_mod
 
@@ -452,6 +465,7 @@ def digest_cmd(model, via_cli, profile, do_clear):
         click.echo(f"\n[DIGEST] saved → {digest_path}", err=True)
         succeeded = True
     finally:
+        do_clear = not do_keep
         inbox_mod.finish_digest(clear=do_clear and succeeded)
         if do_clear and succeeded:
             click.echo(f"[INBOX] {len(locked_entries)} item(s) cleared.", err=True)
