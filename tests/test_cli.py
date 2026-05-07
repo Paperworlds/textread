@@ -813,7 +813,7 @@ def test_digest_calls_agent_and_prints(runner, monkeypatch, tmp_path, patch_inbo
 
 
 def test_digest_clear_flag_removes_inbox(runner, monkeypatch, tmp_path, patch_inbox):
-    """`textread digest --clear` clears the inbox after digest."""
+    """`textread digest` clears the inbox after a successful digest (default behaviour)."""
     import textread.cli as cli_mod
 
     import textread.digests as digests_mod
@@ -823,7 +823,7 @@ def test_digest_clear_flag_removes_inbox(runner, monkeypatch, tmp_path, patch_in
     monkeypatch.setattr(cli_mod.agent, "digest",
                         lambda items, model, backend, profile: "## Done")
 
-    result = runner.invoke(main, ["digest", "--clear"])
+    result = runner.invoke(main, ["digest"])
     assert result.exit_code == 0, result.output
     assert patch_inbox.list_entries() == []
 
