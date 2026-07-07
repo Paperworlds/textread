@@ -5,7 +5,7 @@ import yaml
 
 
 _CONFIG_PATH = Path("~/.local/paperworlds/textread/config.yaml")
-_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend", "default_profile", "pdf_backend", "raindrop_token", "raindrop_collection", "raindrop_digested_collection", "raindrop_blocked_collection", "learnings_path"}
+_KNOWN_FIELDS = {"cache_root", "default_model", "context_path", "agent_enabled", "agent_backend", "default_profile", "pdf_backend", "raindrop_token", "raindrop_collection", "raindrop_digested_collection", "raindrop_blocked_collection", "raindrop_must_open_collection", "learnings_path", "nitter_instance", "twitter_cookie", "rss_sources", "rss_active_work", "python_weekly_cookie"}
 
 
 @dataclasses.dataclass
@@ -21,7 +21,13 @@ class TextreadConfig:
     raindrop_collection: str = "textread"
     raindrop_digested_collection: str = "digested"
     raindrop_blocked_collection: str = "blocked"
+    raindrop_must_open_collection: str = "must-open"
     learnings_path: str = "~/.local/paperworlds/learnings"
+    nitter_instance: str = "https://nitter.privacydev.net"
+    twitter_cookie: str | None = None
+    rss_sources: list = dataclasses.field(default_factory=list)
+    rss_active_work: list = dataclasses.field(default_factory=list)
+    python_weekly_cookie: str | None = None
 
 
 def load() -> TextreadConfig:

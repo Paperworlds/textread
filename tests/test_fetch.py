@@ -14,6 +14,9 @@ from textread.fetch import (
     FetchResult,
     fetch_pdf,
     pull,
+    rewrite_twitter_url,
+    _fetch_twitter_fxtwitter,
+    _tweet_id_from_url,
 )
 
 ROBOTS_DISALLOW_ALL = "User-agent: *\nDisallow: /"
@@ -244,6 +247,142 @@ def test_r07_empty_text_fallback():
 
     with patch("httpx.get", side_effect=get_responses), \
          patch("newspaper.Article", return_value=empty_article), \
+         patch("newspaper.Config"), \
+         patch("textread.fetch.Document", return_value=mock_doc):
+        result = pull("http://example.com/article")
+
+    assert result is not None
+    assert result.text == SAMPLE_TEXT
+
+
+# ---------------------------------------------------------------------------
+# Twitter/Nitter URL rewriting
+# ---------------------------------------------------------------------------
+
+def test_rewrite_twitter_url_x_com():
+    result = rewrite_twitter_url(
+        "https://x.com/someuser/status/1234567890",
+        "https://nitter.privacydev.net",
+    )
+    assert result == "https://nitter.privacydev.net/someuser/status/1234567890"
+
+
+def test_rewrite_twitter_url_twitter_com():
+    result = rewrite_twitter_url(
+        "https://twitter.com/someuser/status/9876543210",
+        "https://nitter.example.com",
+    )
+    assert result == "https://nitter.example.com/someuser/status/9876543210"
+
+
+def test_rewrite_twitter_url_www_prefix():
+    result = rewrite_twitter_url(
+        "https://www.x.com/someuser/status/111",
+        "https://nitter.example.com",
+    )
+    assert result == "https://nitter.example.com/someuser/status/111"
+
+
+def test_rewrite_twitter_url_non_twitter_unchanged():
+    url = "https://example.com/some/article"
+    assert rewrite_twitter_url(url, "https://nitter.example.com") == url
+
+
+def test_pull_twitter_no_cookie_uses_fxtwitter():
+    """pull() with a Twitter URL and no cookie calls fxtwitter, not x.com directly."""
+    fx_response = MagicMock()
+    fx_response.status_code = 200
+    fx_response.json.return_value = {
+        "tweet": {
+            "url": "https://x.com/user/status/123",
+            "id": "123",
+            "text": "Hello from a tweet",
+            "raw_text": {"text": "Hello from a tweet", "facets": []},
+            "author": {"screen_name": "user", "description": ""},
+        }
+    }
+    fx_response.raise_for_status = MagicMock()
+
+    with patch("httpx.get", return_value=fx_response):
+        result = pull("https://x.com/user/status/123")
+
+    assert result is not None
+    assert result.url == "https://x.com/user/status/123"
+    assert "Hello from a tweet" in result.text
+
+
+def test_pull_twitter_with_cookie_fetches_directly():
+    """pull() with twitter_cookie bypasses fxtwitter and hits x.com directly."""
+    html_resp = MagicMock()
+    html_resp.status_code = 200
+    html_resp.text = "<html><body><article>Article content here</article></body></html>"
+    html_resp.url = "https://x.com/i/article/999"
+    html_resp.headers = {"content-type": "text/html"}
+    html_resp.raise_for_status = MagicMock()
+
+    with patch("httpx.get", return_value=html_resp) as mock_get:
+        result = pull(
+            "https://x.com/i/article/999",
+            twitter_cookie="ct0=abc; auth_token=xyz",
+        )
+
+    assert result is not None
+    # Cookie was sent
+    call_headers = mock_get.call_args[1]["headers"]
+    assert "ct0=abc; auth_token=xyz" in call_headers["Cookie"]
+    assert call_headers.get("x-csrf-token") == "abc"
+
+
+def test_fxtwitter_link_tweet_raises_blocked():
+    """_fetch_twitter_fxtwitter raises FetchBlocked for link-only tweets (X Articles)."""
+    fx_response = MagicMock()
+    fx_response.status_code = 200
+    fx_response.json.return_value = {
+        "tweet": {
+            "url": "https://x.com/user/status/123",
+            "id": "123",
+            "text": "",
+            "raw_text": {"text": "https://t.co/abc123", "facets": []},
+            "author": {"screen_name": "user", "description": ""},
+        }
+    }
+    fx_response.raise_for_status = MagicMock()
+
+    with patch("httpx.get", return_value=fx_response):
+        with pytest.raises(FetchBlocked, match="twitter_cookie"):
+            _fetch_twitter_fxtwitter("https://x.com/user/status/123")
+
+
+def test_tweet_id_from_url():
+    assert _tweet_id_from_url("https://x.com/user/status/2066561780495896785") == "2066561780495896785"
+    assert _tweet_id_from_url("https://x.com/i/article/999") is None
+
+
+def test_binary_data_exception_falls_through_to_readability():
+    """Regression: newspaper's is_binary_url() false-positives on Content-Disposition: inline
+    (e.g. cursor.com/blog). We must catch ArticleBinaryDataException and fall through to
+    the httpx + readability path instead of erroring."""
+    from newspaper.exceptions import ArticleBinaryDataException
+
+    failing_article = MagicMock()
+    failing_article.download.side_effect = ArticleBinaryDataException(
+        "Article is binary data: http://example.com/article"
+    )
+
+    robots_resp = _mock_robots_response(ROBOTS_ALLOW_ALL)
+
+    fetch_resp = MagicMock()
+    fetch_resp.status_code = 200
+    fetch_resp.text = SAMPLE_HTML
+    fetch_resp.url = "http://example.com/article"
+    fetch_resp.headers = {"content-type": "text/html; charset=utf-8"}
+    fetch_resp.raise_for_status = MagicMock()
+
+    mock_doc = MagicMock()
+    mock_doc.summary.return_value = f"<div>{SAMPLE_TEXT}</div>"
+
+    with patch("httpx.get", side_effect=[robots_resp, fetch_resp]), \
+         patch("newspaper.Article", return_value=failing_article), \
          patch("newspaper.Config"), \
          patch("textread.fetch.Document", return_value=mock_doc):
         result = pull("http://example.com/article")

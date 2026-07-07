@@ -90,7 +90,7 @@ def _run_url_pipeline(url, model, ctx_path, refresh, deep, save, no_agent, via_c
     profile = profile or cfg.default_profile
 
     try:
-        result = fetch.pull(url, refresh=refresh, cache=_CacheProxy(cfg))
+        result = fetch.pull(url, refresh=refresh, cache=_CacheProxy(cfg), nitter_instance=cfg.nitter_instance, twitter_cookie=cfg.twitter_cookie)
     except FetchBlocked as e:
         click.echo(f"[WARN] Blocked by robots.txt: {e}", err=True)
         sys.exit(1)
@@ -355,7 +355,7 @@ def add_cmd(source: str):
     else:
         cache_key = source
         try:
-            result = fetch.pull(source, cache=_CacheProxy(cfg))
+            result = fetch.pull(source, cache=_CacheProxy(cfg), nitter_instance=cfg.nitter_instance, twitter_cookie=cfg.twitter_cookie)
         except FetchBlocked as e:
             click.echo(f"[WARN] Blocked by robots.txt: {e}", err=True)
             sys.exit(1)
@@ -541,7 +541,7 @@ def pull_cmd(do_delete: bool):
                 inbox_mod.add(url, "pdf", title, url)
         else:
             try:
-                result = fetch.pull(url, cache=_CacheProxy(cfg))
+                result = fetch.pull(url, cache=_CacheProxy(cfg), nitter_instance=cfg.nitter_instance, twitter_cookie=cfg.twitter_cookie)
                 if result is not None:
                     cache.put(url, result, cfg)
             except FetchBlocked as e:
@@ -979,9 +979,270 @@ def search_cmd(query: str, scope: str, limit: int, ignore_case: bool):
         click.echo(f"No matches for '{query}'.")
 
 
+@main.command("rss")
+@click.option("--via-cli", is_flag=True, help="Use CLI backend instead of SDK")
+@click.option("--profile", default=None, help="textaccounts profile for CLI backend")
+@click.option("--model", default="sonnet", show_default=True)
+@click.option("--save", is_flag=True, help="Push save_to_raindrop items to Raindrop")
+@click.option("--date", "rerun_date", default=None,
+              help="Re-push from an existing digest log (YYYY-MM-DD) — skips fetch and evaluation")
+def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_date: str | None) -> None:
+    """Fetch RSS feeds, evaluate with Claude, produce a YAML digest.
+
+    Run without flags to fetch new items and evaluate. Use --save to push
+    save_to_raindrop items to Raindrop. Use --date YYYY-MM-DD --save to
+    re-push from a previous log (retries pending/failed entries).
+    """
+    from textread import rss as rss_mod
+    from textread.agent import rss_evaluate, AgentError
+
+    cfg = load_config()
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    target_date = rerun_date or today
+
+    # --date --save: re-push from existing log, no fetch/evaluate
+    if rerun_date and save:
+        try:
+            log = rss_mod.read_log(rerun_date)
+        except FileNotFoundError:
+            click.echo(f"[ERROR] No RSS digest log for {rerun_date}", err=True)
+            sys.exit(1)
+        _rss_push_raindrop(log, rerun_date, cfg, rss_mod)
+        return
+
+    if rerun_date:
+        click.echo(f"[INFO] --date without --save just prints the existing log.")
+        try:
+            log = rss_mod.read_log(rerun_date)
+            import yaml as _yaml
+            click.echo(_yaml.dump(log, default_flow_style=False, allow_unicode=True, sort_keys=False))
+        except FileNotFoundError:
+            click.echo(f"[ERROR] No RSS digest log for {rerun_date}", err=True)
+            sys.exit(1)
+        return
+
+    if not cfg.rss_sources:
+        click.echo("[ERROR] No rss_sources configured — add them to config.yaml", err=True)
+        sys.exit(1)
+
+    # Fetch feeds
+    state = rss_mod.load_state()
+    all_items: list = []
+    feed_meta: list[dict] = []
+    sponsor_count = 0
+    duplicate_count = 0
+
+    for source in cfg.rss_sources:
+        feed_url = source.get("url") if isinstance(source, dict) else source
+        label = source.get("label", feed_url.split("/")[-1].replace(".rss", "")) if isinstance(source, dict) else ""
+        last_guid = state.get(feed_url)
+        stype = source.get("type", "rss") if isinstance(source, dict) else "rss"
+
+        try:
+            if stype == "newsletter":
+                scraper = source.get("scraper") if isinstance(source, dict) else None
+                if scraper == "python_weekly":
+                    if not cfg.python_weekly_cookie:
+                        click.echo(f"[WARN] python_weekly_cookie not configured — skipping {feed_url}", err=True)
+                        continue
+                    result = rss_mod.fetch_newsletter_python_weekly(
+                        cookie=cfg.python_weekly_cookie,
+                        last_seen_guid=last_guid,
+                    )
+                else:
+                    click.echo(f"[WARN] Unknown newsletter scraper {scraper!r} — skipping {feed_url}", err=True)
+                    continue
+            else:
+                result = rss_mod.fetch_feed(feed_url, label, last_guid)
+        except Exception as exc:
+            click.echo(f"[WARN] Failed to fetch {feed_url}: {exc}", err=True)
+            continue
+
+        raw_new = result.new_items
+        sponsors = [i for i in raw_new if rss_mod.is_sponsor(i)]
+        sponsor_count += len(sponsors)
+        non_sponsor = [i for i in raw_new if not rss_mod.is_sponsor(i)]
+        all_items.extend(non_sponsor)
+
+        feed_meta.append({
+            "url": feed_url,
+            "label": label,
+            "items_fetched": result.items_fetched,
+            "new_items": len(raw_new),
+            "last_seen_guid": result.last_seen_guid,
+        })
+
+    if not all_items:
+        click.echo("[INFO] No new items across all feeds.")
+        return
+
+    deduped = rss_mod.dedup(all_items)
+    duplicate_count = len(all_items) - len(deduped)
+
+    click.echo(f"[RSS] {len(deduped)} items to evaluate "
+               f"({sponsor_count} sponsors, {duplicate_count} duplicates removed)", err=True)
+
+    # Evaluate
+    backend = "cli" if via_cli else cfg.agent_backend
+    try:
+        data = rss_evaluate(
+            items=deduped,
+            active_work=cfg.rss_active_work,
+            sponsor_count=sponsor_count,
+            duplicate_count=duplicate_count,
+            date=today,
+            model=model,
+            backend=backend,
+            profile=profile,
+        )
+    except AgentError as exc:
+        click.echo(f"[ERROR] RSS evaluation failed: {exc}", err=True)
+        sys.exit(1)
+
+    # Merge feed metadata into log
+    data["feeds"] = feed_meta
+    data.setdefault("filtered", {})
+    data["filtered"]["sponsors"] = sponsor_count
+    data["filtered"]["duplicates"] = duplicate_count
+
+    # Ensure must_open and save_to_raindrop items have status: pending + clean URLs
+    for entry in data.get("must_open", []):
+        entry.setdefault("status", "pending")
+        entry["url"] = rss_mod.strip_utm(entry.get("url", ""))
+    for entry in data.get("save_to_raindrop", []):
+        entry.setdefault("status", "pending")
+        entry["url"] = rss_mod.strip_utm(entry.get("url", ""))
+
+    # Write log
+    log_path = rss_mod.write_log(data, today)
+    click.echo(f"[RSS] Log saved → {log_path}", err=True)
+
+    # Update state
+    for meta in feed_meta:
+        if meta.get("last_seen_guid"):
+            state[meta["url"]] = meta["last_seen_guid"]
+    rss_mod.save_state(state)
+
+    # Print YAML to stdout
+    import yaml as _yaml
+    click.echo(_yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False))
+
+    if save:
+        _rss_push_raindrop(data, today, cfg, rss_mod)
+
+
+def _rss_push_raindrop(log: dict, date: str, cfg, rss_mod) -> None:
+    """Push pending must_open and save_to_raindrop entries to Raindrop."""
+    from textread import raindrop
+
+    if not cfg.raindrop_token:
+        click.echo("[ERROR] raindrop_token not configured", err=True)
+        sys.exit(1)
+
+    must_open_col_id = raindrop.find_or_create_collection(cfg.raindrop_token, cfg.raindrop_must_open_collection)
+    digested_col_id = raindrop.find_or_create_collection(cfg.raindrop_token, cfg.raindrop_digested_collection)
+
+    # Push must_open items to dedicated collection
+    for entry in log.get("must_open", []):
+        if entry.get("status") in ("added", ):
+            continue
+        url = entry.get("url", "")
+        title = entry.get("title", "")
+        try:
+            raindrop.create_item(cfg.raindrop_token, url, must_open_col_id, title=title,
+                                 tags=["rss", "must-open", entry.get("source", "")])
+            entry["status"] = "added"
+            click.echo(f"[RAINDROP/must-open] added: {title}")
+        except Exception as exc:
+            entry["status"] = "failed"
+            click.echo(f"[RAINDROP/must-open] failed: {url} — {exc}", err=True)
+
+    # Push group items directly to digested — already evaluated, not inbox items
+    pending = [e for e in log.get("save_to_raindrop", []) if e.get("status") in ("pending", "failed")]
+    for entry in pending:
+        url = entry.get("url", "")
+        title = entry.get("title", "")
+        try:
+            raindrop.create_item(cfg.raindrop_token, url, digested_col_id, title=title,
+                                 tags=["rss", entry.get("source", "")])
+            entry["status"] = "added"
+            click.echo(f"[RAINDROP] added: {title}")
+        except Exception as exc:
+            entry["status"] = "failed"
+            click.echo(f"[RAINDROP] failed: {url} — {exc}", err=True)
+
+    if not log.get("must_open") and not pending:
+        click.echo("[RSS] Nothing pending to push to Raindrop.")
+        return
+
+    rss_mod.write_log(log, date)
+
+
+@click.group(name="traces")
+def traces_group():
+    """Inspect the agent evaluation trace log."""
+
+
+@traces_group.command(name="list")
+@click.option("--limit", default=50, show_default=True)
+@click.option("--tool", default=None, help="Filter by tool name (e.g. textread, textmap).")
+@click.option("--op", default=None, help="Filter by operation (e.g. evaluate, fetch).")
+def traces_list_cmd(limit: int, tool: str | None, op: str | None):
+    """List recent trace rows across all paperworlds tools."""
+    from textread import traces as traces_mod
+
+    rows = traces_mod.recent(limit, tool=tool, operation=op)
+    if not rows:
+        click.echo("No traces yet.")
+        return
+    for r in rows:
+        verdict = r["verdict"] or ""
+        score = f"{r['score']:3}" if r["score"] is not None else "   "
+        tokens = f" {r['in_tokens']}→{r['out_tokens']}tok" if r["in_tokens"] else ""
+        latency = f"{r['latency_ms']:5}ms" if r["latency_ms"] is not None else "      "
+        model_short = (r["model"] or "").split("-")[1] if r["model"] else ""
+        click.echo(
+            f"{r['ts']}  [{r['tool']:9}/{r['operation']:8}]  "
+            f"{verdict:13s} {score}  {latency}{tokens}"
+            + (f"  [{model_short}]" if model_short else "")
+            + f"  {(r['ref'] or '')[:60]}"
+        )
+
+
+@traces_group.command(name="stats")
+@click.option("--tool", default=None, help="Scope to one tool.")
+def traces_stats_cmd(tool: str | None):
+    """Aggregate stats, optionally scoped to one tool."""
+    from textread import traces as traces_mod
+
+    s = traces_mod.stats(tool=tool)
+    scope = f" [{tool}]" if tool else " [all tools]"
+    if not s["total"]:
+        click.echo(f"No traces yet{scope}.")
+        return
+    click.echo(f"Total{scope}         : {s['total']}")
+    click.echo(f"Avg latency        : {s['avg_latency_ms']} ms")
+    if s["total_in_tokens"]:
+        click.echo(f"Tokens in / out    : {s['total_in_tokens']} / {s['total_out_tokens']}")
+    click.echo("\nBy operation:")
+    for op, n in s["by_operation"].items():
+        click.echo(f"  {op:16s} {n:4}")
+    if s["by_verdict"]:
+        click.echo("\nBy verdict:")
+        for verdict, n in s["by_verdict"].items():
+            bar = "█" * (n * 30 // s["total"])
+            click.echo(f"  {verdict:13s} {n:4}  {bar}")
+    if s["by_model"]:
+        click.echo("\nBy model:")
+        for model, n in s["by_model"].items():
+            click.echo(f"  {model:40s} {n:4}")
+
+
 main.add_command(context_group, "context")
 main.add_command(cache_group, "cache")
 main.add_command(digests_group, "digests")
 main.add_command(config_group, "config")
 main.add_command(raindrop_group, "raindrop")
 main.add_command(learnings_group, "learnings")
+main.add_command(traces_group, "traces")

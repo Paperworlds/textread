@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.9.1
+
+- fix(fetch): catch `ArticleBinaryDataException` from newspaper4k and fall through to the readability + httpx path. Cursor's blog (and any site sending `Content-Disposition: inline`) was being misclassified as binary, since newspaper's `is_binary_url()` treats *any* Content-Disposition header as an attachment download. Regression test added.
+
 ## v0.9.0
 
 - BREAKING: all textread state and config now lives under `~/.local/paperworlds/textread/`. Previous paths (`~/.config/paperworlds/textread.yaml`, `~/.local/state/paperworlds/textread/`, `~/.textread/`) are no longer read.

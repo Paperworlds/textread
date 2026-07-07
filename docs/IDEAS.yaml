@@ -93,6 +93,45 @@ ideas:
     trigger: |
       Soon — see prompts/012-browser-fetch-backend.md.
 
+  agent_reach_backends:
+    status: idea
+    priority: medium
+    title: Cherry-pick Agent-Reach's clean read backends (Jina Reader, yt-dlp)
+    source: |
+      - https://github.com/Panniantong/Agent-Reach (MIT, Python CLI)
+      - Raised 2026-07-07 from a Twitter roundup of Claude Code tools.
+      - Agent-Reach is not itself a reader — it's a capability layer that
+        installs + routes to third-party backends and writes a SKILL.md so an
+        agent knows which to call. We want the backend list, not the tool.
+    summary: |
+      Agent-Reach maintains an ordered primary+fallback backend list per
+      channel. Two of its backends are clean, API-key-free, and additive to
+      what textread does today:
+        - Jina Reader (r.jina.ai): prepend to a URL → hosted HTML→markdown.
+          A zero-install alternative to the browser_fetch_backend for
+          JS-heavy / SPA pages — no local Chromium, no stateful browser
+          process. Tradeoff: a third-party service sees the URL (not our
+          bytes), and it's rate-limited without a key.
+        - yt-dlp: opens a content type textread can't read today — YouTube
+          (and other video) transcripts/subtitles → feed into the same
+          agent pipeline as any other raw.md. Local, no API key.
+    relationship: |
+      - Jina Reader is a lighter sibling of browser_fetch_backend (planned):
+        try native newspaper4k → Jina Reader (hosted) → local browser (heavy).
+        Slot it as fetch_backend: native | jina | browser.
+      - yt-dlp is net-new capability (video → transcript), not a fetch tier.
+    excluded_on_purpose: |
+      Agent-Reach's X / Reddit / Xiaohongshu backends work by harvesting
+      logged-in Chrome cookies (OpenCLI "复用 Chrome 登录态"); the repo itself
+      warns of 封号风险 (account-ban risk) and advises throwaway accounts.
+      That is exactly the TOS gray area browser_fetch_backend's
+      what_it_does_NOT_solve already rules out, and it clashes with the
+      clean, GPG-signed, single-identity ethos of the stack. Do NOT adopt
+      the login-state scrapers. Safe backends only.
+    trigger: |
+      When browser_fetch_backend work starts (Jina is the cheap first tier
+      to try before Chromium), or when a video URL shows up in a pull batch.
+
   pdf_to_md:
     status: done
     title: PDF → raw.md conversion
@@ -162,3 +201,66 @@ ideas:
     sources:
       - https://github.com/AnandChowdhary/docs-markdown
       - https://workspace.google.com/marketplace/app/docs_to_markdown/700168918607
+
+  no_mistakes_gated_push:
+    status: idea
+    priority: medium
+    title: Adopt no-mistakes for worktree-based gated pushes
+    source: |
+      - https://github.com/kunchenguid/no-mistakes
+      - Raised 2026-06-30 from RSS digest
+    summary: |
+      Local git proxy: `git push no-mistakes` spins a disposable worktree, runs
+      review → test → lint → push → PR → CI sequentially, nothing reaches remote
+      until everything is green. Auto-fixes mechanical issues, escalates judgment
+      calls interactively. Non-blocking — validation runs in the worktree, you
+      keep coding in your working tree.
+    why_interesting: |
+      The worktree isolation is the key insight: pre-commit hooks block the terminal,
+      this doesn't. Review + test happen in a throw-away copy, main tree untouched.
+      Directly relevant to agent-reviewer patterns — essentially Check 3 and Check 4
+      running automatically on every push.
+    trigger: |
+      Try on textread first. Install with `curl -fsSL .../install.sh | sh`,
+      init with `no-mistakes init`, then replace one `git push origin` with
+      `git push no-mistakes` and observe the pipeline.
+
+  mineru_hard_doc_backend:
+    status: parked
+    priority: low
+    title: MinerU as a hard-document conversion backend (scanned / formulas / complex layout)
+    source: |
+      - https://github.com/opendatalab/mineru
+      - Raised 2026-06-26 (curiosity eval). Same family as pdf_to_md's marker_pdf
+        fallback — MinerU is the higher-end escalation above it.
+    summary: |
+      Heavyweight document-parsing engine: PDF/image/DOCX/PPTX/XLSX/web → Markdown+JSON,
+      with 109-language OCR, tables→HTML, formulas→LaTeX, multi-column reading-order
+      preservation, handwriting. Best-in-class on the hard-document tail that
+      pymupdf4llm (done, first choice) and marker-pdf (done, complex fallback) still
+      mangle: scanned PDFs, formula/table-heavy academic papers, messy multi-column.
+    where_it_wins: |
+      ~10% of inputs: scanned/OCR PDFs, scientific papers (LaTeX formulas, cross-page
+      tables), complex multi-column layouts.
+    where_it_loses: |
+      Everything textread does day-to-day (web articles, clean PDFs, markdown). For those
+      it earns nothing over pymupdf4llm or handing bytes straight to Claude.
+    cost: |
+      Heavy: downloads ML models (~20GB disk, 16GB+ RAM, GPU preferred, optional
+      vLLM/LMDeploy). Would violate textread's "small and specific" ethos as a core dep.
+      License: "MinerU Open Source License" = Apache 2.0 + additional conditions
+      (not pure permissive) — keep it an optional dep, never vendor.
+    recommended_shape: |
+      Do NOT make it a textread dependency. MinerU ships an MCP server — expose it as an
+      optional, dark-by-default [textserve] bundle. textread calls it as a tier-3 pdf
+      backend (pdf_backend: native | marker | mineru) only when marker isn't enough,
+      behind a [mineru] extra / API call. Keeps textread light, fits bundles-dark-by-
+      default, sidesteps the license tangle.
+    relationship: |
+      Escalation tier above the existing pdf_to_md options. markitdown
+      (forum thread: idea-markitdown-as-document-conversion-backend) stays the
+      higher-leverage lightweight first step; MinerU is the "when even marker isn't
+      enough" tail.
+    trigger: |
+      Only when a real backlog of hard docs (scanned / scientific) shows up that
+      marker-pdf handles poorly. Until then, parked.

@@ -41,7 +41,7 @@ def mock_deps(monkeypatch):
     fetch_result = object()  # sentinel — non-None means fresh fetch
     mapping = _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: fetch_result)
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: fetch_result)
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "raw content")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
@@ -79,7 +79,7 @@ def test_r02_model_flag(runner, monkeypatch):
         called_model.append(model)
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
@@ -108,7 +108,7 @@ def test_r03_context_flag(runner, monkeypatch, tmp_path):
         loaded_roles.append(ctx.role)
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
@@ -130,7 +130,7 @@ def test_r04_refresh_flag(runner, monkeypatch):
 
     refresh_vals = []
 
-    def fake_pull(url, refresh=False, cache=None):
+    def fake_pull(url, refresh=False, cache=None, **kw):
         refresh_vals.append(refresh)
         return object()
 
@@ -210,7 +210,7 @@ def test_r07_remap_uses_cached_raw(runner, monkeypatch):
 def test_r10_agent_error_exits_1(monkeypatch):
     import textread.cli as cli_mod
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.agent, "evaluate", lambda url, raw, ctx, model, **kw: (_ for _ in ()).throw(AgentError("bad json")))
@@ -228,7 +228,7 @@ def test_r10_agent_error_exits_1(monkeypatch):
 def test_r11_fetch_blocked_exits_1(monkeypatch):
     import textread.cli as cli_mod
 
-    def raise_blocked(url, refresh=False, cache=None):
+    def raise_blocked(url, refresh=False, cache=None, **kw):
         raise FetchBlocked(url)
 
     monkeypatch.setattr(cli_mod.fetch, "pull", raise_blocked)
@@ -246,7 +246,7 @@ def test_r11_fetch_blocked_exits_1(monkeypatch):
 def test_r12_fetch_error_exits_1(monkeypatch):
     import textread.cli as cli_mod
 
-    def raise_error(url, refresh=False, cache=None):
+    def raise_error(url, refresh=False, cache=None, **kw):
         raise FetchError("connection timeout")
 
     monkeypatch.setattr(cli_mod.fetch, "pull", raise_error)
@@ -272,7 +272,7 @@ def test_r01_no_agent_flag_skips_agent(runner, monkeypatch):
         agent_called.append(True)
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
@@ -299,7 +299,7 @@ def test_r02_config_agent_disabled_skips_agent(runner, monkeypatch):
         agent_called.append(True)
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
@@ -326,7 +326,7 @@ def test_r03_no_agent_ignores_model(runner, monkeypatch):
         agent_called.append(model)
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.agent, "evaluate", fake_evaluate)
@@ -348,7 +348,7 @@ def test_r04_no_agent_cache_hit(runner, monkeypatch):
 
     fetch_called = []
 
-    def fake_pull(url, refresh=False, cache=None):
+    def fake_pull(url, refresh=False, cache=None, **kw):
         fetch_called.append(refresh)
         return None  # No new content (cache hit)
 
@@ -393,7 +393,7 @@ def test_via_cli_flag_sets_backend(runner, monkeypatch):
         seen_backend.append(kw.get("backend"))
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
@@ -452,7 +452,7 @@ def test_profile_flag_passed_to_agent(runner, monkeypatch):
         seen_profile.append(kw.get("profile"))
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
@@ -475,7 +475,7 @@ def test_default_profile_from_config(runner, monkeypatch):
         seen_profile.append(kw.get("profile"))
         return _make_mapping()
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
@@ -495,7 +495,7 @@ def test_profile_with_sdk_backend_warns(runner, monkeypatch):
 
     # Patch _evaluate_sdk so real evaluate() runs (and prints the [WARN]) without hitting the API
     monkeypatch.setattr(agent_mod, "_evaluate_sdk", lambda url, raw, ctx, model: _make_mapping())
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.cache, "write_mapping", lambda url, d, cfg: None)
@@ -522,7 +522,7 @@ def test_url_cmd_no_agent(runner, monkeypatch):
     """`textread url --no-agent` skips agent and prints [CACHED]."""
     import textread.cli as cli_mod
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, refresh=False, cache=None, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "get_markdown", lambda url, cfg: "text")
     monkeypatch.setattr(cli_mod.context, "load", lambda: cli_mod.ReadContext())
@@ -690,7 +690,7 @@ def test_add_url(runner, monkeypatch, patch_inbox):
     """`textread add <url>` fetches, caches, and appends to inbox."""
     import textread.cli as cli_mod
 
-    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, cache=None, refresh=False: object())
+    monkeypatch.setattr(cli_mod.fetch, "pull", lambda url, cache=None, refresh=False, **kw: object())
     monkeypatch.setattr(cli_mod.cache, "put", lambda url, result, cfg: None)
     monkeypatch.setattr(cli_mod.cache, "exists", lambda url, cfg=None: False)
 
