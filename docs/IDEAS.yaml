@@ -1,0 +1,164 @@
+# textread — Ideas backlog
+# Format: each idea has a slug, status, and enough context to act on later.
+# Statuses: idea | exploring | planned | parked
+
+ideas:
+
+  multi_model_pipeline:
+    status: idea
+    priority: low
+    title: Hybrid multi-model digest pipeline
+    source: textread digest 2026-04-27-2, brainstorm item 5 (claude_usage_limits_reddit.pdf)
+    summary: |
+      Route per-item summarisation during digest to a cheaper/free model
+      (e.g. Gemini Flash — free tier, 1M context) and only call Claude for
+      the cross-cutting synthesis: themes, connections, brainstorm.
+      That's where Claude earns its keep. Per-document reading is mechanical
+      extraction that Gemini handles well.
+    implementation_sketch: |
+      In agent.digest(): split into two phases.
+      Phase 1: summarise each item independently → Gemini Flash via google-generativeai SDK.
+      Phase 2: feed condensed summaries to Claude → themes + brainstorm only.
+      Add config key: digest_router: claude | gemini+claude
+    config_sketch: |
+      digest_router: gemini+claude   # claude | gemini+claude
+      gemini_model: gemini-1.5-flash
+    tradeoff: |
+      Gemini summaries are shallower — good for factual extraction, weaker on nuanced
+      interpretation. Validate per-item quality before trusting fully.
+      Also adds a second SDK dependency and API key requirement.
+    trigger: When digest token costs or session limits become a practical problem.
+
+  browser_fetch_backend:
+    status: planned
+    priority: medium
+    title: Browser fetch backend for JS-heavy / SPA pages
+    source: |
+      - https://github.com/browser-use/browser-harness (lightweight, ~600 lines, CDP-attach)
+      - https://playwright.dev (heavier, isolated, more reproducible)
+      - Concrete trigger 2026-04-30: textread pull blocked on
+        x.com/.../article/... — and many SPA-rendered Substack / Medium /
+        modern blog URLs likely return blank or truncated text via the
+        current httpx + newspaper4k path.
+    prompt: prompts/012-browser-fetch-backend.md
+    summary: |
+      Today fetch.pull() runs newspaper4k → readability fallback. Both
+      operate on the *initial* HTML the server returns. For client-rendered
+      pages (Substack hydrate, Medium gates, single-page apps, anything
+      heavy on framework JS), the initial HTML is a near-empty shell and
+      we end up with junk in raw.md.
+
+      Add a third fetch backend that drives a real browser, waits for the
+      page to render, then extracts. Mirrors the existing pdf_backend
+      pattern (native | marker) — config key fetch_backend: native | browser.
+
+    architecture: |
+      - Config: fetch_backend: native | browser (default native).
+      - Per-call override: textread read --via-browser <url>, textread pull --via-browser.
+      - New module src/textread/fetch_browser.py — only imported lazily
+        when the backend is selected, so default users pay no cost.
+      - Default driver: browser-harness (CDP-attach to an existing Chrome
+        if available, spawns a headless one otherwise — keeps cold-start
+        fast and lets the user pre-login if needed for paywalled content).
+      - Alternative driver: Playwright, gated behind an [extras] install.
+      - Robots.txt is still honored exactly as today — browser doesn't
+        bypass our own polite-fetching rules.
+      - Output shape unchanged: returns the same FetchResult.
+
+    what_it_solves: |
+      - Substack / Medium / Ghost / Notion-published pages that hydrate
+        client-side and return blank readability summaries today.
+      - SPA blogs (Vercel/Next.js apps) that 200 with a skeleton.
+      - Pages where newspaper4k extracts the wrong block (nav, footer)
+        because the article element doesn't exist until JS runs.
+
+    what_it_does_NOT_solve: |
+      - X.com / Twitter `/article/` URLs. These require a logged-in session
+        and X aggressively detects headless browsers (Cloudflare, behavioral
+        fingerprinting). Even with persisted cookies and stealth plugins,
+        success is intermittent and TOS-violating. Manual workaround stays:
+        copy article text → save as ~/file.md → textread add ~/file.md.
+      - Sites that hard-block by IP / ASN.
+      - Pages requiring CAPTCHA solve.
+
+    tradeoffs: |
+      - Adds a heavy *optional* dep (Chromium ~150MB if Playwright; relies
+        on user's existing Chrome if browser-harness).
+      - Slow (~2-5s per page vs. ~200ms native). Acceptable for pull()
+        where we batch through Raindrop overnight; less ideal for
+        interactive textread read.
+      - Stateful: a leaked browser process is a real risk. Need explicit
+        cleanup / with-context patterns.
+
+    trigger: |
+      Soon — see prompts/012-browser-fetch-backend.md.
+
+  pdf_to_md:
+    status: done
+    title: PDF → raw.md conversion
+    summary: |
+      Allow textread read <path-or-url-to-pdf> to produce raw.md from a PDF,
+      feeding it through the same agent pipeline as web pages.
+    options:
+      pymupdf4llm:
+        pip: pymupdf4llm
+        notes: |
+          Fastest option, no ML/GPU. Detects headers, tables, multi-column layouts.
+          Best for native (text-embedded) PDFs. OCR optional.
+          Sweet spot: speed + quality for most docs.
+        verdict: first choice
+      marker_pdf:
+        pip: marker-pdf
+        notes: |
+          Better structure preservation than pymupdf4llm, especially for complex layouts.
+          Slower (~11s vs <1s). ML-based.
+        verdict: fallback for complex/scanned PDFs
+    implementation_sketch: |
+      In fetch.py: detect if input is a .pdf path or PDF MIME type.
+      Run pymupdf4llm.to_markdown(path) → write to raw.md directly.
+      Skip the httpx + readability path entirely.
+    sources:
+      - https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/
+      - https://themenonlab.blog/blog/best-open-source-pdf-to-markdown-tools-2026
+
+  google_docs_to_md:
+    status: idea
+    title: Google Docs → raw.md conversion
+    summary: |
+      Allow textread read <google-docs-url> to export the doc as markdown
+      and feed it through the agent pipeline.
+    options:
+      google_docs_api:
+        notes: |
+          Export via Google Docs API (exportLinks, MIME type text/plain or
+          application/vnd.openxmlformats-officedocument.wordprocessingml.document).
+          Then convert docx → md with pandoc or python-docx.
+          Requires OAuth / service account — significant auth overhead.
+        verdict: most reliable, most setup
+      gdoc2md_web:
+        url: https://gdoc2md.com/
+        notes: |
+          Web tool, not scriptable. Not useful for textread.
+        verdict: parked
+      gd2md_html_addon:
+        notes: |
+          Google Docs add-on (manual, in-browser). Not automatable from CLI.
+        verdict: parked
+      native_copy_as_markdown:
+        notes: |
+          Google Docs has Tools > Preferences > Enable Markdown → "Copy as Markdown".
+          No API access, manual only.
+        verdict: parked
+    implementation_sketch: |
+      Detect google docs URL pattern (docs.google.com/document/d/<id>).
+      Use Google Docs API export endpoint with docx MIME type.
+      Pipe through pandoc (subprocess) or python-mammoth for docx → md.
+      Auth: recommend service account JSON path in config.
+    config_sketch: |
+      google_docs_credentials: ~/.config/paperworlds/gdocs-credentials.json
+    tradeoff: |
+      OAuth setup is the main friction. Without it, only publicly shared docs
+      can be fetched (via the HTML export URL, which loses structure).
+    sources:
+      - https://github.com/AnandChowdhary/docs-markdown
+      - https://workspace.google.com/marketplace/app/docs_to_markdown/700168918607

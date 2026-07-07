@@ -1,0 +1,32 @@
+[project]
+name = "textread"
+version = "0.9.0"
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.25",
+    "click>=8.1",
+    "httpx>=0.27",
+    "newspaper4k>=0.9",
+    "pymupdf4llm>=0.0.17",
+    "pyyaml>=6.0",
+    "readability-lxml>=0.8",
+]
+
+[project.optional-dependencies]
+profiles = ["textaccounts>=0.5.3"]
+
+[project.scripts]
+textread = "textread.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/textread"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "textaccounts>=0.5.3",
+]
