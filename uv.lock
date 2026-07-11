@@ -1020,12 +1020,14 @@ dependencies = [
     { name = "click" },
     { name = "httpx" },
     { name = "newspaper4k" },
-    { name = "pymupdf4llm" },
     { name = "pyyaml" },
     { name = "readability-lxml" },
 ]
 
 [package.optional-dependencies]
+pdf = [
+    { name = "pymupdf4llm" },
+]
 profiles = [
     { name = "textaccounts" },
 ]
@@ -1042,12 +1044,12 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "newspaper4k", specifier = ">=0.9" },
-    { name = "pymupdf4llm", specifier = ">=0.0.17" },
+    { name = "pymupdf4llm", marker = "extra == 'pdf'", specifier = ">=0.0.17" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "readability-lxml", specifier = ">=0.8" },
     { name = "textaccounts", marker = "extra == 'profiles'", specifier = ">=0.5.3" },
 ]
-provides-extras = ["profiles"]
+provides-extras = ["profiles", "pdf"]
 
 [package.metadata.requires-dev]
 dev = [

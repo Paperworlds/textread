@@ -179,7 +179,7 @@ def test_fetch_pdf_missing_dep(tmp_path, monkeypatch):
     pdf_file.write_bytes(b"%PDF fake")
     monkeypatch.setitem(sys.modules, "pymupdf4llm", None)
 
-    with pytest.raises(FetchError, match="pymupdf4llm"):
+    with pytest.raises(FetchError, match="pdf extra"):
         fetch_pdf(str(pdf_file))
 
 

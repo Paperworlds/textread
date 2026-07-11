@@ -364,7 +364,7 @@ def _extract_pdf(url: str, path: Path, pages: str | None) -> FetchResult:
     try:
         import pymupdf4llm  # type: ignore[import]
     except ImportError:
-        raise FetchError("PDF support requires pymupdf4llm — run: pip install pymupdf4llm")
+        raise FetchError("PDF support requires the pdf extra — run: uv sync --extra pdf")
 
     kwargs: dict = {}
     if pages:
