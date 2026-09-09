@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from html import unescape
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -225,4 +226,100 @@ def fetch_newsletter_python_weekly(
         new_items=items,
         items_fetched=len(items),
         last_seen_guid=issue_url,
+    )
+
+
+_CODE_HOMEPAGE = "https://codenewsletter.ai"
+# How many recent issue pages to pull metadata for on a single run.
+_CODE_MAX_ISSUES = 15
+
+
+def extract_code_issue_slugs(html: str) -> list[str]:
+    """Return the unique /p/ issue slugs on The Code's homepage, in document order.
+
+    Document order is not chronological — issues are sorted by their published
+    date once their metadata has been fetched.
+    """
+    seen: list[str] = []
+    for m in re.finditer(r'href="(/p/[^"#?]+)"', html):
+        slug = m.group(1)
+        if slug not in seen:
+            seen.append(slug)
+    return seen
+
+
+def parse_code_issue_meta(html: str) -> dict[str, str]:
+    """Pull og:title, og:description and article:published_time off an issue page."""
+    meta: dict[str, str] = {}
+    for prop in ("og:title", "og:description", "article:published_time"):
+        m = re.search(
+            r'<meta[^>]+(?:property|name)="%s"[^>]+content="([^"]*)"' % re.escape(prop), html
+        ) or re.search(
+            r'<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="%s"' % re.escape(prop), html
+        )
+        if m:
+            meta[prop.split(":")[-1]] = unescape(m.group(1)).strip()
+    return meta
+
+
+def fetch_newsletter_the_code(
+    last_seen_guid: str | None = None,
+    max_issues: int = _CODE_MAX_ISSUES,
+) -> FeedResult:
+    """Scrape The Code (codenewsletter.ai) and return recent issues as RssItem list.
+
+    The Code is narrative prose with inline links whose anchor text is a sentence
+    fragment, so an issue — not an individual link — is the unit here. Each issue
+    becomes one item carrying its title and subtitle.
+
+    The newest issue URL is the guid used for state tracking; issues published no
+    later than last_seen_guid's issue are dropped.
+    """
+    headers = {"User-Agent": UA}
+
+    resp = httpx.get(_CODE_HOMEPAGE, headers=headers, follow_redirects=True, timeout=15)
+    resp.raise_for_status()
+    slugs = extract_code_issue_slugs(resp.text)[:max_issues]
+
+    issues: list[tuple[str, dict[str, str]]] = []
+    for slug in slugs:
+        issue_url = _CODE_HOMEPAGE + slug
+        try:
+            r = httpx.get(issue_url, headers=headers, follow_redirects=True, timeout=15)
+            r.raise_for_status()
+        except httpx.HTTPError:
+            continue
+        meta = parse_code_issue_meta(r.text)
+        if meta.get("title"):
+            issues.append((issue_url, meta))
+
+    # Homepage order is not chronological — sort newest first.
+    issues.sort(key=lambda pair: pair[1].get("published_time", ""), reverse=True)
+
+    cutoff = None
+    for issue_url, meta in issues:
+        if issue_url == last_seen_guid:
+            cutoff = meta.get("published_time", "")
+            break
+
+    items = []
+    for issue_url, meta in issues:
+        if cutoff is not None and meta.get("published_time", "") <= cutoff:
+            continue
+        items.append(RssItem(
+            title=meta["title"],
+            url=issue_url,
+            description=meta.get("description", ""),
+            guid=issue_url,
+            source_feed=_CODE_HOMEPAGE,
+            label="the-code",
+        ))
+
+    newest = issues[0][0] if issues else last_seen_guid
+    return FeedResult(
+        url=_CODE_HOMEPAGE,
+        label="the-code",
+        new_items=items,
+        items_fetched=len(items),
+        last_seen_guid=newest,
     )

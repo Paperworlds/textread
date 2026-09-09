@@ -1050,6 +1050,8 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
                         cookie=cfg.python_weekly_cookie,
                         last_seen_guid=last_guid,
                     )
+                elif scraper == "the_code":
+                    result = rss_mod.fetch_newsletter_the_code(last_seen_guid=last_guid)
                 else:
                     click.echo(f"[WARN] Unknown newsletter scraper {scraper!r} — skipping {feed_url}", err=True)
                     continue
