@@ -15,7 +15,7 @@ from textread.rss import (
     dedup,
     fetch_feed,
     fetch_newsletter_python_weekly,
-    fetch_newsletter_the_code,
+    fetch_newsletter_beehiiv_spa,
     extract_code_issue_slugs,
     parse_code_issue_meta,
     is_sponsor,
@@ -371,7 +371,7 @@ def _mock_code_responses():
     def _get(url, **kwargs):
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
-        resp.text = CODE_HOMEPAGE if url == "https://codenewsletter.ai" else CODE_ISSUES[url]
+        resp.text = CODE_HOMEPAGE if url.endswith("/archive") else CODE_ISSUES[url]
         return resp
     return _get
 
@@ -391,8 +391,8 @@ def test_parse_code_issue_meta_unescapes():
 
 def test_code_scraper_sorts_newest_first():
     with patch("httpx.get", side_effect=_mock_code_responses()):
-        result = fetch_newsletter_the_code()
-    assert result.label == "the-code"
+        result = fetch_newsletter_beehiiv_spa()
+    assert result.label == "code-newsletter"
     assert result.items_fetched == 3
     assert [i.title for i in result.new_items] == [
         "Newest headline", "Middle headline", "Older headline & more",
@@ -402,7 +402,7 @@ def test_code_scraper_sorts_newest_first():
 
 def test_code_scraper_drops_issues_at_or_before_last_seen():
     with patch("httpx.get", side_effect=_mock_code_responses()):
-        result = fetch_newsletter_the_code(
+        result = fetch_newsletter_beehiiv_spa(
             last_seen_guid="https://codenewsletter.ai/p/middle-issue"
         )
     assert [i.title for i in result.new_items] == ["Newest headline"]
@@ -416,5 +416,5 @@ def test_code_scraper_skips_unreachable_issue():
         return _mock_code_responses()(url, **kwargs)
 
     with patch("httpx.get", side_effect=_get):
-        result = fetch_newsletter_the_code()
+        result = fetch_newsletter_beehiiv_spa()
     assert [i.title for i in result.new_items] == ["Newest headline", "Older headline & more"]

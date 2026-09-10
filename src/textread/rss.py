@@ -229,7 +229,7 @@ def fetch_newsletter_python_weekly(
     )
 
 
-_CODE_HOMEPAGE = "https://codenewsletter.ai"
+_CODE_ARCHIVE = "https://codenewsletter.ai/archive"
 # How many recent issue pages to pull metadata for on a single run.
 _CODE_MAX_ISSUES = 15
 
@@ -262,28 +262,35 @@ def parse_code_issue_meta(html: str) -> dict[str, str]:
     return meta
 
 
-def fetch_newsletter_the_code(
+def fetch_newsletter_beehiiv_spa(
+    archive_url: str = _CODE_ARCHIVE,
+    label: str = "code-newsletter",
     last_seen_guid: str | None = None,
     max_issues: int = _CODE_MAX_ISSUES,
 ) -> FeedResult:
-    """Scrape The Code (codenewsletter.ai) and return recent issues as RssItem list.
+    """Scrape a Beehiiv newsletter archive and return recent issues as RssItem list.
 
-    The Code is narrative prose with inline links whose anchor text is a sentence
-    fragment, so an issue — not an individual link — is the unit here. Each issue
-    becomes one item carrying its title and subtitle.
+    Used for The Code (codenewsletter.ai). Despite the name, no headless browser
+    is needed: the archive is server-rendered enough to yield issue links, and
+    each issue page carries og:title, og:description and article:published_time.
+
+    The Code is narrative prose whose inline anchor text is a sentence fragment
+    ("promise", "surged"), so an issue — not an individual link — is the unit
+    here. Each issue becomes one item carrying its title and subtitle.
 
     The newest issue URL is the guid used for state tracking; issues published no
     later than last_seen_guid's issue are dropped.
     """
     headers = {"User-Agent": UA}
+    origin = re.sub(r"(https?://[^/]+).*", r"\1", archive_url)
 
-    resp = httpx.get(_CODE_HOMEPAGE, headers=headers, follow_redirects=True, timeout=15)
+    resp = httpx.get(archive_url, headers=headers, follow_redirects=True, timeout=15)
     resp.raise_for_status()
     slugs = extract_code_issue_slugs(resp.text)[:max_issues]
 
     issues: list[tuple[str, dict[str, str]]] = []
     for slug in slugs:
-        issue_url = _CODE_HOMEPAGE + slug
+        issue_url = origin + slug
         try:
             r = httpx.get(issue_url, headers=headers, follow_redirects=True, timeout=15)
             r.raise_for_status()
@@ -311,14 +318,14 @@ def fetch_newsletter_the_code(
             url=issue_url,
             description=meta.get("description", ""),
             guid=issue_url,
-            source_feed=_CODE_HOMEPAGE,
-            label="the-code",
+            source_feed=archive_url,
+            label=label,
         ))
 
     newest = issues[0][0] if issues else last_seen_guid
     return FeedResult(
-        url=_CODE_HOMEPAGE,
-        label="the-code",
+        url=archive_url,
+        label=label,
         new_items=items,
         items_fetched=len(items),
         last_seen_guid=newest,
