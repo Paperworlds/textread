@@ -1036,6 +1036,9 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
     for source in cfg.rss_sources:
         feed_url = source.get("url") if isinstance(source, dict) else source
         label = source.get("label", feed_url.split("/")[-1].replace(".rss", "")) if isinstance(source, dict) else ""
+        if isinstance(source, dict) and source.get("disabled"):
+            click.echo(f"[INFO] Skipping disabled source {feed_url}")
+            continue
         last_guid = state.get(feed_url)
         stype = source.get("type", "rss") if isinstance(source, dict) else "rss"
 
@@ -1048,6 +1051,12 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
                         continue
                     result = rss_mod.fetch_newsletter_python_weekly(
                         cookie=cfg.python_weekly_cookie,
+                        last_seen_guid=last_guid,
+                    )
+                elif scraper == "beehiiv_spa":
+                    result = rss_mod.fetch_newsletter_beehiiv_spa(
+                        archive_url=feed_url,
+                        label=label,
                         last_seen_guid=last_guid,
                     )
                 else:

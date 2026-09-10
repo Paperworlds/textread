@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 import yaml
 
@@ -14,6 +15,9 @@ from textread.rss import (
     dedup,
     fetch_feed,
     fetch_newsletter_python_weekly,
+    fetch_newsletter_beehiiv_spa,
+    extract_code_issue_slugs,
+    parse_code_issue_meta,
     is_sponsor,
     load_state,
     read_log,
@@ -328,3 +332,89 @@ def test_pw_scraper_guid_is_utm_stripped():
     assert "utm_source" not in result.new_items[0].guid
     # but url still carries them (stripped at save time)
     assert "utm_source=www.pythonweekly.com" in result.new_items[0].url
+
+
+# ---------------------------------------------------------------------------
+# The Code (codenewsletter.ai) scraper
+# ---------------------------------------------------------------------------
+
+CODE_HOMEPAGE = """<html><body>
+<a href="/p/older-issue">x</a>
+<a href="/p/newest-issue">y</a>
+<a href="/p/older-issue">duplicate</a>
+<a href="/p/middle-issue">z</a>
+<a href="/about">not an issue</a>
+</body></html>"""
+
+
+def _code_issue_html(title: str, desc: str, published: str) -> str:
+    return (
+        f'<html><head>'
+        f'<meta property="og:title" content="{title}"/>'
+        f'<meta property="og:description" content="{desc}"/>'
+        f'<meta property="article:published_time" content="{published}"/>'
+        f'</head><body>prose</body></html>'
+    )
+
+
+CODE_ISSUES = {
+    "https://codenewsletter.ai/p/newest-issue": _code_issue_html(
+        "Newest headline", "Also: something", "2026-09-09T13:00:00.000Z"),
+    "https://codenewsletter.ai/p/middle-issue": _code_issue_html(
+        "Middle headline", "Also: other", "2026-09-08T13:00:00.000Z"),
+    "https://codenewsletter.ai/p/older-issue": _code_issue_html(
+        "Older headline &amp; more", "Also: older", "2026-09-07T13:00:00.000Z"),
+}
+
+
+def _mock_code_responses():
+    def _get(url, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.text = CODE_HOMEPAGE if url.endswith("/archive") else CODE_ISSUES[url]
+        return resp
+    return _get
+
+
+def test_extract_code_issue_slugs_dedupes_and_keeps_order():
+    assert extract_code_issue_slugs(CODE_HOMEPAGE) == [
+        "/p/older-issue", "/p/newest-issue", "/p/middle-issue",
+    ]
+
+
+def test_parse_code_issue_meta_unescapes():
+    meta = parse_code_issue_meta(CODE_ISSUES["https://codenewsletter.ai/p/older-issue"])
+    assert meta["title"] == "Older headline & more"
+    assert meta["description"] == "Also: older"
+    assert meta["published_time"] == "2026-09-07T13:00:00.000Z"
+
+
+def test_code_scraper_sorts_newest_first():
+    with patch("httpx.get", side_effect=_mock_code_responses()):
+        result = fetch_newsletter_beehiiv_spa()
+    assert result.label == "code-newsletter"
+    assert result.items_fetched == 3
+    assert [i.title for i in result.new_items] == [
+        "Newest headline", "Middle headline", "Older headline & more",
+    ]
+    assert result.last_seen_guid == "https://codenewsletter.ai/p/newest-issue"
+
+
+def test_code_scraper_drops_issues_at_or_before_last_seen():
+    with patch("httpx.get", side_effect=_mock_code_responses()):
+        result = fetch_newsletter_beehiiv_spa(
+            last_seen_guid="https://codenewsletter.ai/p/middle-issue"
+        )
+    assert [i.title for i in result.new_items] == ["Newest headline"]
+    assert result.last_seen_guid == "https://codenewsletter.ai/p/newest-issue"
+
+
+def test_code_scraper_skips_unreachable_issue():
+    def _get(url, **kwargs):
+        if url == "https://codenewsletter.ai/p/middle-issue":
+            raise httpx.ConnectError("boom")
+        return _mock_code_responses()(url, **kwargs)
+
+    with patch("httpx.get", side_effect=_get):
+        result = fetch_newsletter_beehiiv_spa()
+    assert [i.title for i in result.new_items] == ["Newest headline", "Older headline & more"]

@@ -931,3 +931,23 @@ def test_digests_discard_shows_in_list(runner, patch_digests, tmp_path):
     (d / "2026-04-27.state").write_text("discarded\n")
     result = runner.invoke(main, ["digests", "list"])
     assert "discarded" in result.output
+
+
+def test_rss_skips_disabled_source(tmp_path, monkeypatch):
+    """A source marked disabled: true is never fetched."""
+    from textread import cli as cli_mod
+
+    cfg = cli_mod.load_config()
+    cfg.rss_sources = [
+        {"url": "https://example.com/off.rss", "label": "off", "disabled": True},
+    ]
+    monkeypatch.setattr(cli_mod, "load_config", lambda: cfg)
+
+    called = []
+    monkeypatch.setattr("textread.rss.fetch_feed",
+                        lambda *a, **k: called.append(a) or (_ for _ in ()).throw(AssertionError))
+    monkeypatch.setattr("textread.rss.load_state", lambda *a, **k: {})
+
+    result = CliRunner().invoke(cli_mod.main, ["rss"])
+    assert called == []
+    assert "Skipping disabled source" in result.output
