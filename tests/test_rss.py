@@ -13,16 +13,24 @@ from textread.rss import (
     _parse_items,
     _url_key,
     dedup,
+    annotate_seen_before,
+    canonical_url,
+    digest_urls,
     fetch_feed,
     fetch_newsletter_python_weekly,
     fetch_newsletter_beehiiv_spa,
     extract_code_issue_slugs,
     parse_code_issue_meta,
     is_sponsor,
+    load_seen,
     load_state,
+    prune_seen,
+    record_seen,
+    save_seen,
     read_log,
     save_state,
     strip_utm,
+    title_key,
     update_save_status,
     write_log,
 )
@@ -145,7 +153,7 @@ def test_dedup_preserves_unique_items():
 # fetch_feed — new items since last_seen_guid
 # ---------------------------------------------------------------------------
 
-def test_fetch_feed_new_items_only():
+def test_fetch_feed_skips_items_already_seen():
     mock_resp = MagicMock()
     mock_resp.text = SAMPLE_RSS
     mock_resp.raise_for_status = MagicMock()
@@ -153,39 +161,56 @@ def test_fetch_feed_new_items_only():
     with patch("httpx.get", return_value=mock_resp):
         result = fetch_feed(
             "https://feed.example.com", "devops",
-            last_seen_guid="https://example.com/agents?utm_source=tldrdevops",
+            seen=[canonical_url("https://example.com/agents?utm_source=tldrdevops")],
         )
 
-    # last_seen_guid is the first item — nothing newer
-    assert result.new_items == []
+    assert [i.url for i in result.new_items] == [
+        "https://sponsor.example.com/buy", "https://example.com/old",
+    ]
     assert result.items_fetched == 3
 
 
-def test_fetch_feed_no_last_guid_returns_all():
+def test_fetch_feed_no_state_returns_all():
     mock_resp = MagicMock()
     mock_resp.text = SAMPLE_RSS
     mock_resp.raise_for_status = MagicMock()
 
     with patch("httpx.get", return_value=mock_resp):
-        result = fetch_feed("https://feed.example.com", "devops", last_seen_guid=None)
+        result = fetch_feed("https://feed.example.com", "devops", seen=None)
 
     assert len(result.new_items) == 3
-    assert result.last_seen_guid == "https://example.com/agents?utm_source=tldrdevops"
+    assert canonical_url("https://example.com/agents") in result.last_seen_guid
 
 
-def test_fetch_feed_partial_new():
+def test_fetch_feed_survives_sentinel_dropping_out_of_the_window():
+    """The old single-sentinel cutoff re-emitted a whole feed once its one
+    remembered item rotated out. The window must not do that."""
+    mock_resp = MagicMock()
+    mock_resp.text = SAMPLE_RSS
+    mock_resp.raise_for_status = MagicMock()
+
+    seen = [canonical_url(u) for u in (
+        "https://vanished.example.com/rotated-out-ad",   # no longer in the feed
+        "https://example.com/agents",
+        "https://sponsor.example.com/buy",
+        "https://example.com/old",
+    )]
+    with patch("httpx.get", return_value=mock_resp):
+        result = fetch_feed("https://feed.example.com", "devops", seen=seen)
+
+    assert result.new_items == []
+
+
+def test_fetch_feed_window_is_bounded():
     mock_resp = MagicMock()
     mock_resp.text = SAMPLE_RSS
     mock_resp.raise_for_status = MagicMock()
 
     with patch("httpx.get", return_value=mock_resp):
-        result = fetch_feed(
-            "https://feed.example.com", "devops",
-            last_seen_guid="https://example.com/old",
-        )
+        result = fetch_feed("https://feed.example.com", "devops",
+                            seen=[f"https://old.example.com/{i}" for i in range(1000)])
 
-    # old is 3rd item — 2 items are newer
-    assert len(result.new_items) == 2
+    assert len(result.last_seen_guid) <= 400
 
 
 # ---------------------------------------------------------------------------
@@ -195,12 +220,23 @@ def test_fetch_feed_partial_new():
 def test_state_round_trip(tmp_path):
     state_file = tmp_path / "rss-state.yaml"
     state = {
-        "https://feed.example.com/devops.rss": "https://example.com/latest",
-        "https://feed.example.com/ai.rss": "https://other.com/article",
+        "https://feed.example.com/devops.rss": ["https://example.com/latest"],
+        "https://feed.example.com/ai.rss": ["https://other.com/a", "https://other.com/b"],
     }
     save_state(state, path=state_file)
     loaded = load_state(path=state_file)
     assert loaded == state
+
+
+def test_load_state_migrates_single_guid_schema(tmp_path):
+    """The old schema stored one guid per feed; it must load as a one-item window."""
+    state_file = tmp_path / "rss-state.yaml"
+    state_file.write_text(yaml.dump({
+        "https://feed.example.com/devops.rss": "https://example.com/latest?utm_source=tldr",
+    }))
+    assert load_state(path=state_file) == {
+        "https://feed.example.com/devops.rss": ["https://example.com/latest"],
+    }
 
 
 def test_load_state_missing_file(tmp_path):
@@ -418,3 +454,86 @@ def test_code_scraper_skips_unreachable_issue():
     with patch("httpx.get", side_effect=_get):
         result = fetch_newsletter_beehiiv_spa()
     assert [i.title for i in result.new_items] == ["Newest headline", "Older headline & more"]
+
+
+# ---------------------------------------------------------------------------
+# canonical_url / title_key
+# ---------------------------------------------------------------------------
+
+def test_canonical_url_strips_tracking_keeps_meaning():
+    assert canonical_url("https://ex.com/a?utm_source=tldr&utm_medium=x") == "https://ex.com/a"
+    assert canonical_url("https://ex.com/a?id=7&utm_source=tldr") == "https://ex.com/a?id=7"
+    assert canonical_url("https://EX.com/A/#frag") == "https://ex.com/A"
+    assert canonical_url("https://ex.com/a?b=1&a=2") == canonical_url("https://ex.com/a?a=2&b=1")
+
+
+def test_canonical_url_handles_double_escaped_entities():
+    """State written by the old code carried &amp;amp; — it must still match."""
+    assert canonical_url("https://ex.com/a?x=1&amp;amp;utm_source=tldr") == \
+           canonical_url("https://ex.com/a?x=1&utm_source=tldr")
+
+
+def test_title_key_ignores_short_titles():
+    assert title_key("Projects") == ""
+    assert title_key("Introducing Projects") == ""
+    assert title_key("How Much Does the Harness Matter for Agents") != ""
+
+
+def test_dedup_collapses_same_long_title_at_two_urls():
+    items = [
+        _make_item("https://harnesstax.github.io/", "devops"),
+        _make_item("https://arena.ai/blog/coding-agents-harness-tax", "ai"),
+    ]
+    for i in items:
+        i.title = "HarnessTax: How Much Does the Harness Matter for Coding Agents?"
+    assert len(dedup(items)) == 1
+
+
+def test_dedup_keeps_distinct_items_sharing_a_short_title():
+    items = [_make_item(f"https://ex.com/{i}") for i in range(3)]
+    for i in items:
+        i.title = "Projects"
+    assert len(dedup(items)) == 3
+
+
+# ---------------------------------------------------------------------------
+# Seen ledger
+# ---------------------------------------------------------------------------
+
+def test_seen_ledger_round_trip_and_first_date_wins(tmp_path):
+    f = tmp_path / "rss-seen.yaml"
+    seen = record_seen({}, ["https://ex.com/a?utm_source=tldr"], "2026-09-01")
+    seen = record_seen(seen, ["https://ex.com/a"], "2026-09-19")
+    save_seen(seen, path=f)
+    assert load_seen(path=f) == {"https://ex.com/a": "2026-09-01"}
+
+
+def test_prune_seen_drops_entries_past_retention():
+    seen = {"https://ex.com/old": "2026-05-01", "https://ex.com/new": "2026-09-01"}
+    assert prune_seen(seen, "2026-09-19", retention_days=90) == {"https://ex.com/new": "2026-09-01"}
+
+
+def test_annotate_seen_before_tags_repeats_without_dropping_them():
+    data = {
+        "must_open": [{"url": "https://ex.com/a?utm_source=tldr", "title": "A"}],
+        "groups": [{"name": "G", "items": [
+            {"url": "https://ex.com/a", "title": "A"},
+            {"url": "https://ex.com/fresh", "title": "B"},
+        ]}],
+        "save_to_raindrop": [],
+    }
+    tagged = annotate_seen_before(data, {"https://ex.com/a": "2026-09-14"})
+    assert tagged == 2
+    assert data["groups"][0]["items"][0]["seen_before"] == "2026-09-14"
+    assert "seen_before" not in data["groups"][0]["items"][1]
+    # nothing is removed
+    assert len(data["groups"][0]["items"]) == 2
+
+
+def test_digest_urls_collects_every_surface():
+    data = {
+        "must_open": [{"url": "https://ex.com/1"}],
+        "groups": [{"name": "G", "items": [{"url": "https://ex.com/2"}]}],
+        "save_to_raindrop": [{"url": "https://ex.com/3"}],
+    }
+    assert sorted(digest_urls(data)) == ["https://ex.com/1", "https://ex.com/2", "https://ex.com/3"]

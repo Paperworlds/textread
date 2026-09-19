@@ -1028,6 +1028,7 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
 
     # Fetch feeds
     state = rss_mod.load_state()
+    seen_ledger = rss_mod.load_seen()
     all_items: list = []
     feed_meta: list[dict] = []
     sponsor_count = 0
@@ -1051,13 +1052,13 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
                         continue
                     result = rss_mod.fetch_newsletter_python_weekly(
                         cookie=cfg.python_weekly_cookie,
-                        last_seen_guid=last_guid,
+                        last_seen_guid=(last_guid or [None])[0],
                     )
                 elif scraper == "beehiiv_spa":
                     result = rss_mod.fetch_newsletter_beehiiv_spa(
                         archive_url=feed_url,
                         label=label,
-                        last_seen_guid=last_guid,
+                        last_seen_guid=(last_guid or [None])[0],
                     )
                 else:
                     click.echo(f"[WARN] Unknown newsletter scraper {scraper!r} — skipping {feed_url}", err=True)
@@ -1123,14 +1124,25 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
         entry.setdefault("status", "pending")
         entry["url"] = rss_mod.strip_utm(entry.get("url", ""))
 
+    # Tag anything already surfaced in an earlier digest, then extend the ledger.
+    repeats = rss_mod.annotate_seen_before(data, seen_ledger)
+    if repeats:
+        click.echo(f"[RSS] {repeats} entries seen in an earlier digest (tagged seen_before)", err=True)
+    data["filtered"]["seen_before"] = repeats
+
     # Write log
     log_path = rss_mod.write_log(data, today)
     click.echo(f"[RSS] Log saved → {log_path}", err=True)
 
+    seen_ledger = rss_mod.record_seen(seen_ledger, rss_mod.digest_urls(data), today)
+    rss_mod.save_seen(rss_mod.prune_seen(seen_ledger, today))
+
     # Update state
     for meta in feed_meta:
-        if meta.get("last_seen_guid"):
-            state[meta["url"]] = meta["last_seen_guid"]
+        guid = meta.get("last_seen_guid")
+        if not guid:
+            continue
+        state[meta["url"]] = guid if isinstance(guid, list) else [rss_mod.canonical_url(guid)]
     rss_mod.save_state(state)
 
     # Print YAML to stdout

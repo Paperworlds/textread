@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from html import unescape
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -14,6 +14,9 @@ from textread.fetch import UA
 
 _STATE_PATH = Path("~/.local/paperworlds/textread/rss-state.yaml")
 _DIGESTS_DIR = Path("~/.local/paperworlds/textread/rss-digests")
+_SEEN_PATH = Path("~/.local/paperworlds/textread/rss-seen.yaml")
+# How long an item stays in the seen ledger before it is pruned.
+_SEEN_RETENTION_DAYS = 90
 
 
 @dataclass
@@ -78,37 +81,100 @@ def strip_utm(url: str) -> str:
     return f"{base}?{'&'.join(kept)}" if kept else base
 
 
+_TRACKING_PARAM = re.compile(r"^(utm_|dub_id|_bhlid|trk|sc_channel|ref|fbclid|gclid|mc_cid|mc_eid)")
+
+
+def canonical_url(url: str) -> str:
+    """One canonical identity for an item, used by state, dedup and the seen ledger.
+
+    Lowercases the host, drops the fragment and every tracking parameter, keeps
+    meaningful query params (an id, a page), and trims a trailing slash. Feeds
+    hand out the same article under many decorations; this is what makes two of
+    them compare equal.
+    """
+    url = _unescape(_unescape(url)).strip()
+    url = url.partition("#")[0]
+    base, _, query = url.partition("?")
+    m = re.match(r"(?i)^(https?://)([^/]+)(.*)$", base)
+    if m:
+        base = m.group(1).lower() + m.group(2).lower() + m.group(3)
+    kept = [p for p in query.split("&") if p and not _TRACKING_PARAM.match(p)]
+    base = base.rstrip("/")
+    return f"{base}?{'&'.join(sorted(kept))}" if kept else base
+
+
+# A title must carry this many words before it is trusted as an identity.
+# Short titles ("Projects", "Weekly roundup") collide between genuinely
+# different articles; collapsing on those loses items silently.
+_TITLE_DEDUP_MIN_WORDS = 5
+
+
+def title_key(title: str) -> str:
+    """Normalised title, for catching one article published under two URLs.
+
+    Returns "" for a title too short to identify an article on its own, which
+    disables title matching for that item rather than risking a false collapse.
+    """
+    norm = re.sub(r"[^a-z0-9]+", " ", _unescape(title).lower()).strip()
+    return norm if len(norm.split()) >= _TITLE_DEDUP_MIN_WORDS else ""
+
+
 def _url_key(url: str) -> str:
-    """Normalised URL for dedup — strip query entirely."""
-    return url.partition("?")[0].rstrip("/")
+    """Deprecated alias kept for callers outside the digest path."""
+    return canonical_url(url)
 
 
-def fetch_feed(feed_url: str, label: str, last_seen_guid: str | None = None) -> FeedResult:
-    """Fetch *feed_url* and return items newer than *last_seen_guid*."""
+# How many recent item keys to remember per feed. Comfortably more than a
+# feed's window, so the cutoff survives items rotating out.
+_SEEN_GUID_WINDOW = 400
+
+
+def fetch_feed(feed_url: str, label: str, seen: list[str] | None = None) -> FeedResult:
+    """Fetch *feed_url* and return the items not already in *seen*.
+
+    *seen* is a rolling list of canonical keys for items this feed has already
+    yielded. Filtering against a set, rather than stopping at a single sentinel
+    guid, is what makes this robust: the previous implementation remembered only
+    the feed's topmost item, which in practice is a rotating sponsor ad, and once
+    that ad dropped out of the window nothing matched and the whole feed came
+    back as new.
+    """
     resp = httpx.get(feed_url, headers={"User-Agent": UA}, follow_redirects=True, timeout=15)
     resp.raise_for_status()
     all_items = _parse_items(resp.text, feed_url, label)
 
-    new_items: list[RssItem] = []
-    for item in all_items:
-        if last_seen_guid and item.guid == last_seen_guid:
-            break
-        new_items.append(item)
+    seen_set = set(seen or [])
+    new_items = [i for i in all_items if canonical_url(i.url) not in seen_set]
 
-    top_guid = all_items[0].guid if all_items else last_seen_guid
+    # Newest first in the feed, so newest keys end up at the front of the window.
+    updated = [canonical_url(i.url) for i in all_items]
+    for key in seen or []:
+        if key not in set(updated):
+            updated.append(key)
+
     return FeedResult(url=feed_url, label=label, new_items=new_items,
-                      items_fetched=len(all_items), last_seen_guid=top_guid)
+                      items_fetched=len(all_items),
+                      last_seen_guid=updated[:_SEEN_GUID_WINDOW])
 
 
 def dedup(items: list[RssItem]) -> list[RssItem]:
-    """Remove cross-feed duplicates, keeping first occurrence."""
-    seen: set[str] = set()
+    """Remove cross-feed duplicates within one run, keeping first occurrence.
+
+    Two passes: the same article under decorated URLs (canonical_url), then the
+    same article genuinely published at two addresses, caught by an exact match
+    on the normalised title.
+    """
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
     out: list[RssItem] = []
     for item in items:
-        key = _url_key(item.url)
-        if key not in seen:
-            seen.add(key)
-            out.append(item)
+        url_k = canonical_url(item.url)
+        title_k = title_key(item.title)
+        if url_k in seen_urls or (title_k and title_k in seen_titles):
+            continue
+        seen_urls.add(url_k)
+        seen_titles.add(title_k)
+        out.append(item)
     return out
 
 
@@ -116,15 +182,28 @@ def dedup(items: list[RssItem]) -> list[RssItem]:
 # State persistence
 # ---------------------------------------------------------------------------
 
-def load_state(path: Path = _STATE_PATH) -> dict[str, str]:
-    """Return {feed_url: last_seen_guid} mapping."""
+def load_state(path: Path = _STATE_PATH) -> dict[str, list[str]]:
+    """Return {feed_url: [recent item keys]}.
+
+    Migrates the old {feed_url: single_guid} schema in place: a lone sentinel
+    becomes a one-element window. The first run after migration re-emits that
+    feed's backlog once, because one key cannot establish what was already seen;
+    the seen ledger absorbs it so nothing reaches the digest twice.
+    """
     p = path.expanduser()
     if not p.exists():
         return {}
-    return yaml.safe_load(p.read_text()) or {}
+    raw = yaml.safe_load(p.read_text()) or {}
+    out: dict[str, list[str]] = {}
+    for feed, val in raw.items():
+        if isinstance(val, str):
+            out[feed] = [canonical_url(val)]
+        elif isinstance(val, list):
+            out[feed] = list(val)
+    return out
 
 
-def save_state(state: dict[str, str], path: Path = _STATE_PATH) -> None:
+def save_state(state: dict[str, list[str]], path: Path = _STATE_PATH) -> None:
     p = path.expanduser()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.dump(state, default_flow_style=False))
@@ -330,3 +409,65 @@ def fetch_newsletter_beehiiv_spa(
         items_fetched=len(items),
         last_seen_guid=newest,
     )
+
+
+# ---------------------------------------------------------------------------
+# Seen ledger — what has already been surfaced in a digest
+# ---------------------------------------------------------------------------
+
+def load_seen(path: Path = _SEEN_PATH) -> dict[str, str]:
+    """Return {canonical_url: first-seen date} for items already digested."""
+    p = path.expanduser()
+    if not p.exists():
+        return {}
+    return yaml.safe_load(p.read_text()) or {}
+
+
+def save_seen(seen: dict[str, str], path: Path = _SEEN_PATH) -> None:
+    p = path.expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.dump(seen, default_flow_style=False, sort_keys=True))
+
+
+def prune_seen(seen: dict[str, str], today: str,
+               retention_days: int = _SEEN_RETENTION_DAYS) -> dict[str, str]:
+    """Drop ledger entries older than *retention_days* so it stays bounded."""
+    cutoff = (datetime.strptime(today, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+              - timedelta(days=retention_days)).strftime("%Y-%m-%d")
+    return {url: first for url, first in seen.items() if first >= cutoff}
+
+
+def record_seen(seen: dict[str, str], urls: list[str], today: str) -> dict[str, str]:
+    """Add *urls* to the ledger, keeping the earliest date for each."""
+    for url in urls:
+        key = canonical_url(url)
+        if key and key not in seen:
+            seen[key] = today
+    return seen
+
+
+def digest_urls(data: dict) -> list[str]:
+    """Every URL a digest surfaced — grouped items, must-opens and saves."""
+    urls = [i["url"] for g in data.get("groups") or [] for i in g.get("items", []) if i.get("url")]
+    urls += [e["url"] for e in data.get("must_open") or [] if e.get("url")]
+    urls += [e["url"] for e in data.get("save_to_raindrop") or [] if e.get("url")]
+    return urls
+
+
+def annotate_seen_before(data: dict, seen: dict[str, str]) -> int:
+    """Tag items already surfaced in an earlier digest with seen_before: <date>.
+
+    Returns how many entries were tagged. Items are kept, not dropped, so a story
+    that resurfaces is still evaluated — it just says so.
+    """
+    tagged = 0
+    groups = [i for g in data.get("groups") or [] for i in g.get("items", [])]
+    for entry in groups + (data.get("must_open") or []) + (data.get("save_to_raindrop") or []):
+        url = entry.get("url")
+        if not url:
+            continue
+        first = seen.get(canonical_url(url))
+        if first:
+            entry["seen_before"] = first
+            tagged += 1
+    return tagged
