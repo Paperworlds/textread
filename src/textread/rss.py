@@ -5,6 +5,7 @@ import re
 from html import unescape
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
@@ -27,6 +28,7 @@ class RssItem:
     guid: str
     source_feed: str
     label: str
+    published: str | None = None   # ISO date (YYYY-MM-DD), when the feed says
 
 
 @dataclass
@@ -48,6 +50,7 @@ def _parse_items(xml: str, feed_url: str, label: str) -> list[RssItem]:
             or re.search(r"<description>(.*?)</description>", raw, re.DOTALL)
         )
         guid_m = re.search(r"<guid[^>]*>(.*?)</guid>", raw)
+        date_m = re.search(r"<pubDate>(.*?)</pubDate>", raw)
 
         if not (title_m and link_m):
             continue
@@ -59,8 +62,19 @@ def _parse_items(xml: str, feed_url: str, label: str) -> list[RssItem]:
         guid = guid_m.group(1).strip() if guid_m else url
 
         items.append(RssItem(title=title, url=url, description=desc, guid=guid,
-                             source_feed=feed_url, label=label))
+                             source_feed=feed_url, label=label,
+                             published=_parse_pubdate(date_m.group(1) if date_m else None)))
     return items
+
+
+def _parse_pubdate(raw: str | None) -> str | None:
+    """RFC-822 pubDate to an ISO date, or None when absent or unparseable."""
+    if not raw:
+        return None
+    try:
+        return parsedate_to_datetime(raw.strip()).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
 
 
 def _unescape(s: str) -> str:
@@ -129,7 +143,8 @@ def _url_key(url: str) -> str:
 _SEEN_GUID_WINDOW = 400
 
 
-def fetch_feed(feed_url: str, label: str, seen: list[str] | None = None) -> FeedResult:
+def fetch_feed(feed_url: str, label: str, seen: list[str] | None = None,
+               since: str | None = None) -> FeedResult:
     """Fetch *feed_url* and return the items not already in *seen*.
 
     *seen* is a rolling list of canonical keys for items this feed has already
@@ -146,8 +161,14 @@ def fetch_feed(feed_url: str, label: str, seen: list[str] | None = None) -> Feed
     seen_set = set(seen or [])
     new_items = [i for i in all_items if canonical_url(i.url) not in seen_set]
 
-    # Newest first in the feed, so newest keys end up at the front of the window.
-    updated = [canonical_url(i.url) for i in all_items]
+    if since is not None:
+        # Only items the feed dates on or after `since`. Undated items are held
+        # back rather than guessed at, so they surface in a later unbounded run.
+        new_items = [i for i in new_items if i.published and i.published >= since]
+
+    # The window absorbs only what this run emits. Anything held back by `since`
+    # stays unseen, so a narrow run leaves the older gap intact for a later one.
+    updated = [canonical_url(i.url) for i in new_items]
     for key in seen or []:
         if key not in set(updated):
             updated.append(key)
@@ -399,6 +420,7 @@ def fetch_newsletter_beehiiv_spa(
             guid=issue_url,
             source_feed=archive_url,
             label=label,
+            published=(meta.get("published_time") or "")[:10] or None,
         ))
 
     newest = issues[0][0] if issues else last_seen_guid

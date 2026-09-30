@@ -537,3 +537,64 @@ def test_digest_urls_collects_every_surface():
         "save_to_raindrop": [{"url": "https://ex.com/3"}],
     }
     assert sorted(digest_urls(data)) == ["https://ex.com/1", "https://ex.com/2", "https://ex.com/3"]
+
+
+# ---------------------------------------------------------------------------
+# Dated items and the --since window
+# ---------------------------------------------------------------------------
+
+DATED_RSS = """<?xml version="1.0"?>
+<rss version="2.0"><channel>
+<item><title><![CDATA[Newest]]></title><link>https://ex.com/new</link>
+  <description><![CDATA[d]]></description><guid>https://ex.com/new</guid>
+  <pubDate>Tue, 29 Sep 2026 00:00:00 GMT</pubDate></item>
+<item><title><![CDATA[Middle]]></title><link>https://ex.com/mid</link>
+  <description><![CDATA[d]]></description><guid>https://ex.com/mid</guid>
+  <pubDate>Fri, 25 Sep 2026 00:00:00 GMT</pubDate></item>
+<item><title><![CDATA[Undated]]></title><link>https://ex.com/undated</link>
+  <description><![CDATA[d]]></description><guid>https://ex.com/undated</guid></item>
+</channel></rss>"""
+
+
+def _dated_resp():
+    r = MagicMock()
+    r.text = DATED_RSS
+    r.raise_for_status = MagicMock()
+    return r
+
+
+def test_parse_items_reads_pubdate():
+    items = _parse_items(DATED_RSS, "https://feed", "ai")
+    assert [i.published for i in items] == ["2026-09-29", "2026-09-25", None]
+
+
+def test_since_filters_to_the_window():
+    with patch("httpx.get", return_value=_dated_resp()):
+        result = fetch_feed("https://feed", "ai", seen=None, since="2026-09-29")
+    assert [i.title for i in result.new_items] == ["Newest"]
+
+
+def test_since_holds_back_undated_items():
+    """An undated item is not guessed at — it waits for an unbounded run."""
+    with patch("httpx.get", return_value=_dated_resp()):
+        result = fetch_feed("https://feed", "ai", seen=None, since="2026-01-01")
+    assert [i.title for i in result.new_items] == ["Newest", "Middle"]
+
+
+def test_windowed_run_leaves_the_gap_recoverable():
+    """The whole point of a narrow run: items outside the window must stay
+    unseen, so a later run still surfaces them."""
+    with patch("httpx.get", return_value=_dated_resp()):
+        narrow = fetch_feed("https://feed", "ai", seen=None, since="2026-09-29")
+    assert canonical_url("https://ex.com/new") in narrow.last_seen_guid
+    assert canonical_url("https://ex.com/mid") not in narrow.last_seen_guid
+
+    with patch("httpx.get", return_value=_dated_resp()):
+        catchup = fetch_feed("https://feed", "ai", seen=narrow.last_seen_guid)
+    assert [i.title for i in catchup.new_items] == ["Middle", "Undated"]
+
+
+def test_no_since_behaves_as_before():
+    with patch("httpx.get", return_value=_dated_resp()):
+        result = fetch_feed("https://feed", "ai", seen=None)
+    assert len(result.new_items) == 3

@@ -4,7 +4,7 @@ from __future__ import annotations
 import dataclasses
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import click
@@ -583,7 +583,7 @@ def recover_cmd(since: str | None):
     Useful when a digest crash stranded items: re-running pull after recover
     will bring them back into the inbox.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from textread import raindrop
 
     cfg = load_config()
@@ -986,7 +986,13 @@ def search_cmd(query: str, scope: str, limit: int, ignore_case: bool):
 @click.option("--save", is_flag=True, help="Push save_to_raindrop items to Raindrop")
 @click.option("--date", "rerun_date", default=None,
               help="Re-push from an existing digest log (YYYY-MM-DD) — skips fetch and evaluation")
-def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_date: str | None) -> None:
+@click.option("--since", default=None,
+              help="Only items the feed dates on or after YYYY-MM-DD. Items held back stay "
+                   "unseen, so a later unbounded run still picks them up.")
+@click.option("--days", type=int, default=None,
+              help="Shorthand for --since <today minus N days>. --days 1 is the most recent day.")
+def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_date: str | None,
+            since: str | None, days: int | None) -> None:
     """Fetch RSS feeds, evaluate with Claude, produce a YAML digest.
 
     Run without flags to fetch new items and evaluate. Use --save to push
@@ -1000,6 +1006,14 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     target_date = rerun_date or today
+
+    if days is not None and since is not None:
+        click.echo("[ERROR] Use --since or --days, not both", err=True)
+        sys.exit(1)
+    if days is not None:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    if since:
+        click.echo(f"[RSS] Window: items dated {since} or later", err=True)
 
     # --date --save: re-push from existing log, no fetch/evaluate
     if rerun_date and save:
@@ -1047,6 +1061,10 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
             if stype == "newsletter":
                 scraper = source.get("scraper") if isinstance(source, dict) else None
                 if scraper == "python_weekly":
+                    if since:
+                        click.echo(f"[INFO] {label}: no per-item dates — skipped for a "
+                                   f"--since run, left for a later full run")
+                        continue
                     if not cfg.python_weekly_cookie:
                         click.echo(f"[WARN] python_weekly_cookie not configured — skipping {feed_url}", err=True)
                         continue
@@ -1060,11 +1078,15 @@ def rss_cmd(via_cli: bool, profile: str | None, model: str, save: bool, rerun_da
                         label=label,
                         last_seen_guid=(last_guid or [None])[0],
                     )
+                    if since:
+                        result.new_items = [i for i in result.new_items
+                                            if i.published and i.published >= since]
+                        result.items_fetched = len(result.new_items)
                 else:
                     click.echo(f"[WARN] Unknown newsletter scraper {scraper!r} — skipping {feed_url}", err=True)
                     continue
             else:
-                result = rss_mod.fetch_feed(feed_url, label, last_guid)
+                result = rss_mod.fetch_feed(feed_url, label, last_guid, since=since)
         except Exception as exc:
             click.echo(f"[WARN] Failed to fetch {feed_url}: {exc}", err=True)
             continue
